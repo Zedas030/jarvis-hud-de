@@ -17,6 +17,10 @@ import threading
 import time
 
 CHARS_PER_S = float(os.environ.get("JARVIS_ALEXA_CHARS_PER_S", "15"))
+# In the quiet hours (JARVIS_QUIET_HOURS) the Echo speaks at this volume and goes back afterwards:
+# Alexa reads text at the Echo's own volume, and at 00:17 that was far too loud in bed (04.11.2026).
+NIGHT_VOLUME = float(os.environ.get("JARVIS_ALEXA_NIGHT_VOLUME", "0.2"))
+RESTORE_AFTER_S = 3.0       # after the last sentence should be done
 LAG_S = 1.0                 # cloud round trip before Alexa starts a block
 MAX_CHARS = 250             # longer texts fail in Alexa Media Player; split at sentence ends
 _TAG = re.compile(r"\[[^\][]{1,90}\]")          # tone tags for the TTS providers ("[ruhig]")
@@ -26,6 +30,61 @@ _LOCK = threading.Lock()
 _BUSY = {}                  # entity -> epoch seconds when the last queued sentence should be done
 _TIMERS = {}                # entity -> [threading.Timer] not yet fired
 _PENDING = {}               # entity -> {"text"} the next block, not sent yet: new sentences join it
+_NIGHT = {}                 # media player -> {"volume": before, "timer": Timer} while turned down for the night
+
+
+def _quiet():
+    try:
+        import events
+        return events.quiet_now()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def night_down(eid, seconds_left=0.0):
+    """In the quiet hours: the Echo's volume down to NIGHT_VOLUME before Alexa speaks, back to what it
+    was RESTORE_AFTER_S after the text should be done. Turned by hand in between: stays as turned."""
+    if not _quiet():
+        return
+    import jarvis_mcp as j
+    mp = player(eid)
+    with _LOCK:
+        held = _NIGHT.get(mp)
+        if held:
+            held["timer"].cancel()
+    if not held:
+        try:
+            st = j._ha(f"/api/states/{mp}") or {}
+            vol = (st.get("attributes") or {}).get("volume_level")
+            if not isinstance(vol, (int, float)) or vol <= NIGHT_VOLUME + 0.01:
+                return
+            j._ha("/api/services/media_player/volume_set", {"entity_id": mp, "volume_level": NIGHT_VOLUME})
+        except Exception as e:  # noqa: BLE001 — better spoken than not at all
+            print(f"  Echo leiser: {str(e)[:120]}", flush=True)
+            return
+        held = {"volume": vol}
+    t = threading.Timer(max(0.0, seconds_left) + RESTORE_AFTER_S, night_up, args=(mp,))
+    t.daemon = True
+    held["timer"] = t
+    with _LOCK:
+        _NIGHT[mp] = held
+    t.start()
+
+
+def night_up(mp):
+    import jarvis_mcp as j
+    with _LOCK:
+        held = _NIGHT.pop(mp, None)
+    if not held:
+        return
+    try:
+        st = j._ha(f"/api/states/{mp}") or {}
+        vol = (st.get("attributes") or {}).get("volume_level")
+        if isinstance(vol, (int, float)) and abs(vol - NIGHT_VOLUME) > 0.02:
+            return           # turned by hand meanwhile: that is the volume wanted now
+        j._ha("/api/services/media_player/volume_set", {"entity_id": mp, "volume_level": held["volume"]})
+    except Exception as e:  # noqa: BLE001
+        print(f"  Echo Lautstärke zurück: {str(e)[:120]}", flush=True)
 
 
 def outputs():
@@ -83,8 +142,12 @@ def _send(eid, block):
 def say(eid, text, now=None):
     """Queue the text on the Echo; seconds until it should be spoken (the HUD waits that long)."""
     now = time.time() if now is None else now
+    parts = pieces(text)
     with _LOCK:
-        for part in pieces(text):
+        ahead = max(0.0, _BUSY.get(eid, now) - now)
+    night_down(eid, ahead + sum(seconds(p) for p in parts))     # before the first word goes out
+    with _LOCK:
+        for part in parts:
             block = _PENDING.get(eid)
             if block and len(block["text"]) + 1 + len(part) <= MAX_CHARS:
                 block["text"] += " " + part           # same call to Alexa: no new round trip

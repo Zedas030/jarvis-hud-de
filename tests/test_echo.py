@@ -86,6 +86,44 @@ class EchoOutput(unittest.TestCase):
         self.assertEqual(sent, [("/api/services/media_player/media_stop", {"entity_id": "media_player.nutzer_echo_dot"})])
 
 
+class EchoAtNight(unittest.TestCase):
+    """In the quiet hours the Echo is turned down before Alexa speaks and back afterwards (04.11.2026)."""
+
+    def run_say(self, quiet, start_volume, hand_turned=None):
+        calls, vol = [], {"v": start_volume}
+
+        def ha(path, body=None):
+            calls.append((path, body))
+            if path.startswith("/api/states/"):
+                return {"state": "idle", "attributes": {"volume_level": hand_turned or vol["v"]}}
+            if path.endswith("/volume_set"):
+                vol["v"] = body["volume_level"]
+            return None
+        with prof(), mock.patch("jarvis_mcp._ha", side_effect=ha), \
+                mock.patch.object(alexa_voice, "_quiet", return_value=quiet), \
+                mock.patch.object(alexa_voice, "RESTORE_AFTER_S", 0.05), \
+                mock.patch.object(alexa_voice, "CHARS_PER_S", 1000.0), mock.patch.object(alexa_voice, "LAG_S", 0.05):
+            alexa_voice.say(ECHO, "Gute Nacht.")
+            time.sleep(0.5)
+        return [(p, b) for p, b in calls if b is not None]
+
+    def test_night_turns_down_then_back(self):
+        posts = self.run_say(True, 0.6)
+        self.assertEqual(posts[0], ("/api/services/media_player/volume_set",
+                                    {"entity_id": "media_player.nutzer_echo_dot", "volume_level": alexa_voice.NIGHT_VOLUME}))
+        self.assertEqual(posts[1][1]["message"], "Gute Nacht.")
+        self.assertEqual(posts[-1][1], {"entity_id": "media_player.nutzer_echo_dot", "volume_level": 0.6})
+
+    def test_day_and_already_quiet_leave_volume(self):
+        for quiet, v in ((False, 0.6), (True, 0.1)):
+            posts = self.run_say(quiet, v)
+            self.assertEqual([p for p, _ in posts], ["/api/services/notify/alexa_media_nutzer_echo_dot"])
+
+    def test_turned_by_hand_stays(self):
+        posts = self.run_say(True, 0.6, hand_turned=0.5)        # someone set 0.5 while Alexa spoke
+        self.assertEqual(len([p for p, _ in posts if p.endswith("volume_set")]), 1)   # only the turn-down
+
+
 class Morning(unittest.TestCase):
     def setUp(self):
         morning_echo._LAST.clear()

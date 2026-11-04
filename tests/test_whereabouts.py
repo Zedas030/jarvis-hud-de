@@ -145,6 +145,7 @@ class Announce(unittest.TestCase):
     def test_without_room_goes_where_the_user_is(self):
         calls = []
         with prof(), mock.patch.object(whereabouts, "HA_TOKEN", "x"), ha_state("Wohnzimmer"), \
+                mock.patch("alexa_voice._quiet", return_value=False), \
                 mock.patch("jarvis_mcp._ha", side_effect=lambda path, body=None: calls.append((path, body))):
             self.assertEqual(speakers.announce("", "Essen ist fertig"), "Durchgesagt im Wohnzimmer.")
             self.assertEqual(speakers.announce("hier", "Essen ist fertig"), "Durchgesagt im Wohnzimmer.")

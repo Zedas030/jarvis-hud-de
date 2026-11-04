@@ -146,7 +146,8 @@ class Habits(unittest.TestCase):
 
 class Speakers(unittest.TestCase):
     def test_announce(self):
-        with prof(), mock.patch("jarvis_mcp._ha") as ha:
+        with prof(), mock.patch("jarvis_mcp._ha") as ha, mock.patch.object(speakers, "_quiet", return_value=False), \
+                mock.patch("alexa_voice._quiet", return_value=False):
             self.assertEqual(speakers.announce("wohnzimmer", "Essen ist fertig"), "Durchgesagt im Wohnzimmer.")
             ha.assert_called_with("/api/services/notify/alexa_media_nutzer_echo_dot",
                                   {"message": "Essen ist fertig", "data": {"type": "announce"}})
@@ -154,6 +155,19 @@ class Speakers(unittest.TestCase):
             self.assertEqual(ha.call_args.args[0], "/api/services/tts/speak")
             self.assertEqual(ha.call_args.args[1]["language"], "de")
             self.assertIn("kenne ich nicht", speakers.announce("Keller", "Hallo"))
+
+    def test_announce_at_night_is_quiet(self):
+        """Quiet hours: the Sonos announces at the night volume instead of its own (04.11.2026)."""
+        import sonos
+        with prof(), mock.patch("jarvis_mcp._ha") as ha, mock.patch.object(speakers, "_quiet", return_value=True), \
+                mock.patch.object(sonos, "NIGHT_VOLUME", 0.1):
+            speakers.announce("Schlafzimmer", "Gute Nacht")
+            path, body = ha.call_args.args
+            self.assertEqual(path, "/api/services/media_player/play_media")
+            self.assertTrue(body["announce"])
+            self.assertEqual(body["extra"], {"volume": 10})
+            self.assertTrue(body["media_content_id"].startswith("media-source://tts/"))
+            self.assertIn("language=de", body["media_content_id"])
 
     def test_tv_fixed_commands_only(self):
         with prof(), mock.patch("jarvis_mcp._home", return_value="Erledigt: media_player.play_media") as home:

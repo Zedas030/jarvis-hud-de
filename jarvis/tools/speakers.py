@@ -4,6 +4,9 @@ Speakers in other rooms and the TV — through Home Assistant, no new hardware.
   announce(room, text)  a spoken announcement in a room: an Echo speaks with Alexa's voice
                         (notify.alexa_media_*, type announce), a Sonos with Home Assistant's
                         TTS (tts.speak, German). Jarvis' own voice stays on the PC/iPad.
+                        In the quiet hours both speak quietly: the Echo is turned down to
+                        JARVIS_ALEXA_NIGHT_VOLUME and back, the Sonos announces at
+                        JARVIS_SONOS_NIGHT_VOLUME and returns to its own volume.
                         No room (or "hier") = the room the presence sensors see the user in.
   tv(command, app)      the Fire TV through Alexa Media Player: the command is sent to the TV's
                         Alexa as if spoken there (media_player.play_media, type custom).
@@ -35,6 +38,14 @@ APP = re.compile(r"^[a-zA-Z0-9äöüÄÖÜß+ .-]{2,30}$")
 HERE = re.compile(r"^(hier|bei mir|zu mir|wo ich bin|da wo ich bin|in meinem raum|aktuell|current)$", re.I)
 # words that must never reach Alexa inside an app name
 FORBIDDEN = re.compile(r"kauf|bestell|order|ruf|anruf|nachricht|einkauf|bezahl|zahl|abo|alexa|routine|skill", re.I)
+
+
+def _quiet():
+    try:
+        import events
+        return events.quiet_now()
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _cfg():
@@ -89,8 +100,18 @@ def announce(room, text):
     sp = speakers[name]
     try:
         if sp.get("notify"):
+            import alexa_voice
+            alexa_voice.night_down(sp["notify"], alexa_voice.seconds(text) + 2)   # quiet hours: Echo turned down
             service = sp["notify"].split(".", 1)[1]
             j._ha(f"/api/services/notify/{service}", {"message": text, "data": {"type": "announce"}})
+        elif sp.get("tts") and sp.get("player") and _quiet():
+            # quiet hours: an announcement at the night volume, the Sonos goes back to its own afterwards
+            import urllib.parse
+            import sonos
+            uri = f"media-source://tts/{sp['tts']}?" + urllib.parse.urlencode({"message": text, "language": "de"})
+            j._ha("/api/services/media_player/play_media", {
+                "entity_id": sp["player"], "media_content_id": uri, "media_content_type": "music",
+                "announce": True, "extra": {"volume": sonos._percent(sonos.NIGHT_VOLUME)}})
         elif sp.get("tts") and sp.get("player"):
             j._ha("/api/services/tts/speak", {"entity_id": sp["tts"], "media_player_entity_id": sp["player"],
                                               "message": text, "language": "de"})
