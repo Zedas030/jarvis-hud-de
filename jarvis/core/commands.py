@@ -330,7 +330,9 @@ LEAN_GROUP_RULES = {
                "(ein Befehl, immer mit Bestätigungskarte; vorher in einem Satz sagen, was und warum). Warne bei Platten nicht 'normal' oder Volume über 85 Prozent. pc_status: dieser PC (CPU, RAM, "
                "GPU, VRAM, Platten); net_diagnose: Internet-Probleme eingrenzen; backup_status: Hyper Backup auf dem NAS; "
                "forecast_status: wann NAS, PC-Platte oder Pi-Karte voll wären (immer mit Datenbasis nennen).",
-    "homelab": "Homelab: homelab_status liefert Live-Werte aus Prometheus (internet, wlan, pi, pc), "
+    "homelab": "Homelab: outage_impact beantwortet 'Was fällt aus, wenn X ausfällt?' aus der Abhängigkeitskarte "
+               "(Blast-Radius). pi_reports: Werkzeuge auf dem Pi – backups (wirklich wiederherstellbar?), updates "
+               "(Update-Schleuse), strom (Stromfresser-Detektiv), zigbee (Platzberater). homelab_status liefert Live-Werte aus Prometheus (internet, wlan, pi, pc), "
                "pihole_status die Pi-hole-Zahlen, metrics_query freies PromQL für Verläufe (hours = Zeitraum). "
                "homelab_report: Lagebericht aus Uptime Kuma, Sicherheitszentrale und Energie-Kreislauf. "
                "security_findings listet offene Befunde mit id; security_accept nimmt einen als Ausnahme auf (Karte, "

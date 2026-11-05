@@ -69,6 +69,10 @@ GROUP_RULES = [
                 r"am höchsten|am meisten)"),
     ("homelab", r"\b(lagebericht|uptime|kuma|sicherheitszentrale|sicherheitsbefund|sicherheitslage|nulleinspeisung|"
                 r"energie-?kreislauf)"),
+    ("homelab", r"\b(ausfällt|ausfallen|abstürzt|abhängig|abhängigkeit|hängt .{0,30}\bab\b|single point|spof|"
+                r"blast.?radius|was fällt .{0,20}aus)"),
+    ("homelab", r"\b(restore[ -]?probe|wiederherstell|backup[ -]?test|update[ -]?schleuse|container[ -]?update|"
+                r"stromfresser[ -]?detektiv|detektiv|auffällig|platzberater|zigbee|homelab[ -]?werkzeug)"),
     ("health", r"\b(schlaf|geschlafen|schritte|puls|garmin|body ?battery|stress|fitness|training|lauf|"
                r"gegessen|abendessen|alkohol|bier\b|wein\b|rückblick|wochenrückblick)"),
     ("music", r"\b(musik|spotify|song|lied|playlist|album|abspielen)"),
@@ -720,6 +724,49 @@ def _printer(n):
     return printer.handle(n, _raw())
 
 
+# "Was passiert, wenn der Pi abstürzt?" — Blast-Radius on the Pi knows the dependencies. Unknown device or
+# Blast-Radius unreachable: None, and the question goes to Claude (who has the outage_impact tool).
+OUTAGE = re.compile(r"\b(was (passiert|ist|geht|fällt|funktioniert|bleibt)\b.{0,40}\b(wenn|falls|sobald)\b.{0,60}"
+                    r"\b(ausfällt|ausfallen|ausfall|abstürzt|abstürzen|abschmiert|kaputt|stirbt|offline|down|"
+                    r"keinen strom|ausgeht|weg ist)|was fällt (alles )?aus\b.{0,30}\b(wenn|falls|ohne)|"
+                    r"was hängt (alles )?(am|an der|an dem|vom|von der)\b)")
+
+
+def _outage(n):
+    if not OUTAGE.search(n):
+        return None
+    import outage_map
+    try:
+        return outage_map.spoken(outage_map.ask(_raw() or n.strip()))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+# Status of the homelab tools on the Pi (Restore Probe, Update-Schleuse, Stromfresser-Detektiv, Zigbee-Platzberater).
+# Narrow on purpose: plain "Stromfresser" stays with power_costs' standby report, "Updates?" with updates_check.
+PI_REPORTS = (
+    ("backups", re.compile(r"\b(restore[ -]?probe|wiederherstellungstest|(sind|ist|waren|war) (die |das |meine? )?"
+                           r"(backups?|sicherung(en)?)\b.{0,25}\b(ok|okay|in ordnung|gut|wiederherstellbar|heil|"
+                           r"brauchbar|sauber)|backup[ -]?test|lassen sich (die )?backups)")),
+    ("updates", re.compile(r"\b(update[ -]?schleuse|container[ -]?updates?|(warum|wieso) (wurde|wird|hast du) .{0,30}nicht "
+                           r"(aktualisiert|geupdatet|upgedatet)|was (macht|sagt) die schleuse)")),
+    ("strom", re.compile(r"\b(stromfresser[ -]?detektiv|detektiv|(ist|gibt es) .{0,20}beim strom .{0,20}auffällig|"
+                         r"strom.{0,15}auffälligkeit|auffällig\w* .{0,15}(strom|verbrauch)|"
+                         r"(steckdosen?|geräte?) .{0,20}(keine werte|auffällig))")),
+    ("zigbee", re.compile(r"\b(platzberater|zigbee[ -]?(router|netz|empfang|verbindung|kanal|signal)|"
+                          r"wo (soll|sollte|kann) .{0,40}zigbee|zigbee .{0,30}(stabil|schwach|gut))")),
+    ("alles", re.compile(r"\b(homelab[ -]?werkzeuge|pi[ -]?werkzeuge|was sagen (die )?werkzeuge|werkzeuge auf dem pi)")),
+)
+
+
+def _pi_reports(n):
+    topic = next((t for t, rx in PI_REPORTS if rx.search(n)), None)
+    if not topic or _has(n, "warum", "erklär", "wie behebe", "repar"):
+        return None                                # why/fix questions need Claude (he has pi_reports too)
+    import pi_reports
+    return pi_reports.spoken(topic)
+
+
 def _report(n):
     if not re.search(r"\b(verbrauchsbericht|tokenbericht|token bericht|was hast du (dazu)?gelernt|"
                      r"wie viele? tokens?|wie viel hab\w* ich verbraucht)\b", n):
@@ -895,7 +942,7 @@ def _habits(n):
 
 
 LOCAL_HANDLERS = [_emergency, _choice, _personality, _focus, _daytime, _context, _tasks, _desktop, _routine, _timers, _lists, _pronounce,
-                  _report, _selfcheck, _habits, _episodes, _wellbeing, _maintenance, _situation, _coach, _costs, _announce, _tv, _alerts,
+                  _outage, _pi_reports, _report, _selfcheck, _habits, _episodes, _wellbeing, _maintenance, _situation, _coach, _costs, _announce, _tv, _alerts,
                   _unifi, _media, _pc, _commute, _parcels, _printer, _followup, _home_state, _climate, _home,
                   _music, _time, _date, _sun, _weather, _solar, _nas, _pi]
 

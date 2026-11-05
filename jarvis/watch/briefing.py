@@ -115,6 +115,12 @@ def _mail_count():
     split = f" ({', '.join(f'{a}: {c}' for a, c in results)})" if len(results) > 1 else ""
     return f"Postfach: {n} ungelesene Mails{split} (Details bei Bedarf mit mail_inbox)."
 
+def _pi_tools():
+    """Only findings (failed backup test, held update, open power finding); silence when all is well."""
+    import pi_reports
+    return pi_reports.briefing_line()
+
+
 def morning_block():
     """Briefing data on the day's first turn, once. Empty string otherwise."""
     today = time.strftime("%Y-%m-%d")
@@ -128,7 +134,7 @@ def morning_block():
         states = _ha_states()
     except Exception:  # noqa: BLE001
         pass
-    for part in (_weather, lambda: _energy(states), _coach, lambda: _batteries(states), _mail_count):
+    for part in (_weather, lambda: _energy(states), _coach, lambda: _batteries(states), _mail_count, _pi_tools):
         try:
             text = part()
         except Exception:  # noqa: BLE001 — a dead source must not block the conversation
@@ -142,7 +148,7 @@ def morning_block():
                "Pointe und ohne Vorschläge. " + gentle if gentle else
                "Beginne deine Antwort mit einem kurzen gesprochenen Morgenbriefing (drei bis vier Sätze): "
                "Termine, Wetter mit Einschätzung, ob es zum Golfen taugt, Ladestand des Speichers, ungelesene Mails, "
-               "und fast leere Batterien, falls welche gemeldet sind. ")
+               "fast leere Batterien und Meldungen der Pi-Werkzeuge in einem Satz, falls welche gemeldet sind. ")
             + "Danach geh auf die Nachricht des Users ein.\n" + "\n".join(lines))
 
 
@@ -272,7 +278,7 @@ def briefing_facts():
         states = _ha_states()
     except Exception:  # noqa: BLE001
         pass
-    for part in (_weather, lambda: _energy(states), _coach, lambda: _batteries(states), _mail_count):
+    for part in (_weather, lambda: _energy(states), _coach, lambda: _batteries(states), _mail_count, _pi_tools):
         try:
             text = part()
         except Exception:  # noqa: BLE001 — a dead source must not block the briefing

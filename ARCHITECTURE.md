@@ -90,6 +90,8 @@ via `Path(__file__).resolve().parents[2]`, never via their own folder.
 | Personality | `personality.py` |
 | Proactive | `watchers.py`, `scheduler.py`, `homelab_watch.py`, `briefing.py`, `energy_coach.py` (solar surplus advice, learns the plugs), `away_check.py` (what still runs after leaving home → proposal), `homelab_review.py` (Sunday homelab report), `weather_alerts.py` (DWD warnings), `morning_echo.py` (morning briefing on the living-room Echo, in watchers.py), `house_habits.py` (habits from the HA history → routine proposals, lights left on) |
 | Situation | `situation.py` (Lagebericht: Uptime Kuma status page, ORBIT security centre, energy loop in Home Assistant; findings for homelab_watch) |
+| Outages | `outage_map.py` ("what fails if X fails?" from Blast-Radius on the Pi, `/api/ask`; local router handler `_outage` + LLM tool `outage_impact`, read only) |
+| Pi tools | `pi_reports.py` (status of Restore Probe :8096, Update-Schleuse :8100, Stromfresser-Detektiv :8101, Zigbee-Platzberater :8099; local router handler `_pi_reports` + LLM tool `pi_reports`, read only; only findings go into the morning briefing) |
 | Learning | `reflection.py`, `weekly_review.py`, `suggestions.py`, `background.py` |
 | Music | `spotify.py` (Web API on every device of the account: pause on the wake word, play on after; music tool) |
 | Windows | `pc.py` (volume, apps, ducking), `desktop.py` (windows, files, clipboard, OCR, scripts) |

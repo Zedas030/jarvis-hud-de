@@ -56,3 +56,20 @@ for _n in ("", *map(str, range(2, 10))):
 os.environ.update(SYNO_USER="", SYNO_PASSWORD="")
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import paths  # noqa: E402,F401 — the jarvis/<group> folders
+
+# The PC itself is never touched either. "Musik leiser" in the router tests reached jarvis_mcp._music,
+# which pressed the real volume-down key five times, and pc.py's Core Audio calls set the real master
+# volume — every test run turned the PC down by about 20 % (05.11.2026). Keys are recorded in KEYS
+# instead; without an endpoint, pc.volume() reads None and pc.step falls back to those recorded keys.
+KEYS = []
+if sys.platform == "win32":
+    import ctypes  # noqa: E402
+    ctypes.windll.user32.keybd_event = lambda vk, scan=0, flags=0, extra=0: KEYS.append((vk, flags))
+import pc  # noqa: E402
+
+
+def _no_endpoint():
+    raise RuntimeError("tests never touch the real speakers")
+
+
+pc._endpoint = _no_endpoint

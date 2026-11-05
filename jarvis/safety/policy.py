@@ -37,7 +37,7 @@ CLASSES = {
     # home and systems
     "home_states": READ, "home_control": LIMITED_WRITE, "home_check": READ,  # untrusted-content guard still applies
     "energy_coach": READ, "energy_device_usage": LIMITED_WRITE,   # the coach only advises; usage is a note
-    "homelab_status": READ, "metrics_query": READ, "pihole_status": READ, "homelab_report": READ,
+    "homelab_status": READ, "outage_impact": READ, "pi_reports": READ, "metrics_query": READ, "pihole_status": READ, "homelab_report": READ,
     "security_findings": READ, "security_scan": LIMITED_WRITE, "security_accept": CONFIRM,   # an exception hides a risk
     "power_costs": READ, "weather_alerts": READ,
     "announce": LIMITED_WRITE, "tv_control": LIMITED_WRITE,   # a voice in a room, a fixed TV command   # Prometheus / Pi-hole, read only
