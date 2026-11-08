@@ -27,6 +27,7 @@ import commands
 import events
 import jarvis_profile as profile
 import morning_echo
+import proactive
 
 EVERY = int(os.environ.get("JARVIS_WATCH_SECONDS", "30"))
 EVENT_LEAD_MIN = int(os.environ.get("JARVIS_EVENT_LEAD_MIN", "15"))
@@ -227,7 +228,7 @@ def start():
             for check in (lambda: appliances(states), calendar, lambda: departure_prep(states), lambda: storage(states),
                           nas, parcel_today, lambda: printer_watch(states), lambda: away_check.check(states),
                           lambda: morning_echo.check(states), lambda: phone_answers(states),
-                          lambda: power_budget(states)):
+                          lambda: power_budget(states), lambda: proactive.tick(states)):
                 try:
                     check()
                 except Exception as e:  # noqa: BLE001 — one dead source must not silence the rest

@@ -14,7 +14,7 @@ Legende: ✅ fertig · 🔄 in Arbeit · ⏸ wartet auf Freigabe · ⬜ offen
 | 2 Agenten-Kern | ⬜ | Vorhanden: Router, Haiku/Sonnet, Notbetrieb, Aktionsklassen, Audit, Persönlichkeit, Vault, Episoden. Fehlt: Plugin-Registry, YAML-Konfiguration, SQLite-Gedächtnis, Kurzzeit-Zusammenfassung, Sprecher-Erkennung, Trennung privat/beruflich |
 | 3 Server & Betrieb | ⬜ | Plan und Hardware in `UMBAU-SERVER.md`; `hostos.py` begonnen. Fehlt: Linux-Testlauf, PC-Agent, systemd, Secrets, Backups auf NAS, Watchdog, Selbstüberwachung |
 | 4 HA & Energie | ⬜ | Vorhanden: Räume/Aliase, Klima-Gruppen, eigene Routinen, Energie-Coach, Stromkosten, Budget. Fehlt: HA-Automationen per Sprache, PV-Prognose, Noah-SOC, PromQL aus Sprache mit Grafik |
-| 5 Proaktivität | ⬜ | Vorhanden: Watchers, Ruhezeiten, Prioritäten, Vorschläge, Morgen-Briefing, Handy-Push, Unwetter. Fehlt: Ereignis-Engine (HA-WebSocket, Alertmanager), Bündelung, Ausgabe nach Präsenz, Hinweise per Sprache anpassen |
+| 5 Proaktivität | 🔄 | 05.11.2026: Proaktiver Modus (`feat/proaktiv`, docs/proaktiv.md): Auslöser Heimkommen/Morgen/Sofort/Gute Nacht, Stufen, Ausgabe nach Präsenz, Schweige-Regeln, Feedback per Sprache, Verlauf. Fehlt: Ereignis-Engine (HA-WebSocket statt 30-s-Abfrage, Alertmanager) |
 | 6 Präsenz & Multiroom | ⬜ | Vorhanden: Lautsprecher je Raum, Sonos-Ansagen, Musik umziehen. Fehlt: mmWave/CSI-Fusion, Arbitration mehrerer Mikros, Lautstärke je Raum und Tageszeit |
 | 7 Arbeitsassistent | ⬜ | Vorhanden: IMAP lesen, Entwürfe, CalDAV, Recherche, Pläne. Fehlt: M365 Graph, Fristen-Wächter, Diktat → Dokument, berufliches Gedächtnis (Entscheidung 1 nötig) |
 | 8 HUD | ⬜ | Vorhanden: 13 Layouts, iPad-Pairing, Zustandsanzeige, Graph. Fehlt: Kamera-Streams, Prometheus-Grafiken, Aufteilung von `app.js` |
@@ -38,6 +38,8 @@ Legende: ✅ fertig · 🔄 in Arbeit · ⏸ wartet auf Freigabe · ⬜ offen
 3. Phase 3 Server-Umzug nach `UMBAU-SERVER.md`.
 
 ## Verlauf
+
+- 05.11.2026 Proaktiver Modus gebaut und abgenommen (`docs/abnahme-proaktiv.md`), Branch `feat/proaktiv`.
 
 - 02.11.2026 Phase 0 freigegeben, P0 Fundament gebaut (Logging, Metriken, Abhängigkeiten, Tests).
 - 02.11.2026 Phase 0 Bericht erstellt; Phase 1 Kern fertig (Sprach-Engine auf dem Server).

@@ -29,8 +29,20 @@ MONTHS = ("Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August"
           "Oktober", "November", "Dezember")
 
 
+# "Schlafzimmerlicht aus" is one word to the matcher and went to Claude every time (~45k tokens).
+# Only room + device compounds are split, so "Tageslicht" or "Leselampe" stay as they are.
+_COMPOUND = re.compile(r"\b(\w+zimmer|küchen?|kuechen?|bad|flur|dielen?|büro|buero|keller|garten|balkon)"
+                       r"(licht|lichter|lampe|lampen|leuchte|heizung|thermostat|steckdose|ventilator|"
+                       r"luftreiniger|musik|fernseher|tv)\b")
+
+
+def _split_compound(m):
+    room = {"küchen": "küche", "kuechen": "kueche", "dielen": "diele"}.get(m.group(1), m.group(1))
+    return f"{room} {m.group(2)}"
+
+
 def _norm(text):
-    return " " + re.sub(r"[^\wäöüß%]+", " ", (text or "").lower()).strip() + " "
+    return " " + _COMPOUND.sub(_split_compound, re.sub(r"[^\wäöüß%]+", " ", (text or "").lower()).strip()) + " "
 
 
 def _has(n, *words):
@@ -332,7 +344,9 @@ MUSIC = [
 def _music_target(n):
     """The room the music should go to, when a speaker room is named: "Musik vom Schlafzimmer ins Wohnzimmer",
     "mach die Musik aufm Schlafzimmer im Wohnzimmer an". The room after "vom / aus dem / aufm / auf dem" is
-    where it plays now, so the other one is the target; with one room named, that is the target."""
+    where it plays now, so the other one is the target; with one room named, that is the target.
+    Said as a situation, "es läuft im Schlafzimmer Musik und ich sitze im Wohnzimmer": the room where it
+    "läuft" is the source, the room the user is in ("ich sitze / bin / hier im …") the target."""
     import speakers
     try:
         rooms = speakers.rooms()
@@ -341,8 +355,13 @@ def _music_target(n):
     found = sorted((m.start(), r) for r in rooms for m in re.finditer(r"\b" + re.escape(r.lower()) + r"\b", n))
     if not found:
         return None
+    mine = [r for pos, r in found
+            if re.search(r"\b(ich|bin|sitze?|steh\w*|lieg\w*|hier)\b[^.,]{0,20}\b(im|in der|ins) $", n[:pos])]
+    if mine:
+        return mine[0]
     targets = [r for pos, r in found
-               if not re.search(r"\b(vom|von|aus|aufm|auf dem|auf der|von dem|von der|aus dem|aus der) $", n[:pos])]
+               if not re.search(r"\b(vom|von|aus|aufm|auf dem|auf der|von dem|von der|aus dem|aus der"
+                                r"|(läuft|spielt|lief|kommt)( \w+)? (im|in der|aufm|auf dem|auf der)) $", n[:pos])]
     return targets[0] if targets else found[-1][1]
 
 
@@ -378,7 +397,8 @@ def _music(n):
 # real lamp, though — only switches named "... LED" are indicator lights.
 _DEV = {"at": 0.0, "list": []}
 _CONFIG_WORDS = re.compile(r"kindersicherung|automatisch|display|update|abschaltung|shuffle|wiederholen|"
-                           r"nicht stören|stummschalt|internetzugang|internet access", re.I)
+                           r"nicht stören|stummschalt|internetzugang|internet access|autoplay|überblenden|loudness|"
+                           r"gruppierung", re.I)    # the last four: Sonos settings HA shows as switches
 _INDICATOR_LED = re.compile(r"\bled\b", re.I)
 PROTECTED_OFF = re.compile(r"router|\bpc\b|raspi|\bpi\b|kühlschrank|smart hub|nas|fritz|wi-?fi|wlan", re.I)
 _DOMAIN_WORDS = {"licht": "light", "lampe": "light", "lampen": "light", "led": "light", "steckdose": "switch",
@@ -422,7 +442,9 @@ QUESTION = re.compile(r"^\s*(ist|sind|läuft|laufen|brennt|brennen|hat|haben|wie
                       r"steht|stehen|status|zustand|gibt es|weißt du)\b")
 
 
-def _match_devices(n, hint=None, devs=None):
+def _match_devices(n, hint=None, devs=None, prefer=None):
+    """The devices meant by n. `prefer` (entity ids of the room the user is in) breaks a tie before
+    the exact-name rule does: "TV an" in the bedroom is the bedroom TV, not the living-room one."""
     said = set(n.split())
     words = {w for w in said if w not in _FILLER and len(w) > 1}
     devs = _devices() if devs is None else devs
@@ -441,6 +463,13 @@ def _match_devices(n, hint=None, devs=None):
             best, score = [d], sc
         elif sc == score:
             best.append(d)
+    if len(best) > 1 and prefer:
+        here = [d for d in best if d["eid"] in prefer]
+        if len(here) > 1:                          # "TV Schlafzimmer" is the TV here, "Schlafzimmer TV-Autoplay" not
+            plain = [d for d in here if {w for w in d["base"] if not _ROOM_WORD.fullmatch(w)} <= words]
+            here = plain or here
+        if here:
+            best = here
     if len(best) > 1:
         exact = [d for d in best if d["base"] <= words]   # "TV" beats "TV Schlafzimmer" for "schalt das TV an"
         if len(exact) == 1:
@@ -466,32 +495,144 @@ def _home_state(n):
     return " und ".join(parts) + f", {_sir()}."
 
 
-def _climate(n):
+# ── the room a command without a room belongs to (room_scope.py) ──
+# "Licht an", "wärmer", "TV an" name no room: they mean the room the presence sensors see the user in.
+# A room word in the sentence always wins. When the sensors disagree (walking, a radar ghost) and the
+# answer would change what is switched, Jarvis asks "Wohnzimmer oder Schlafzimmer?" and the reply runs
+# the command for that room.
+ROOM_ASK_S = 60
+_ROOMQ = {"n": "", "rooms": [], "handler": None, "at": 0.0}
+
+
+def _names_room(n):
+    import room_scope
+    names = [r.lower() for r in room_scope.rooms()]
+    return bool(re.search(r"\b(" + _ROOM_WORD.pattern + r")\b", n)) or any(
+        re.search(r"\b" + re.escape(r) + r"\b", n) for r in names)
+
+
+def _scope(n, room=None):
+    """None when the room plays no part (feature off, a room named, HA unreachable); else the
+    room_scope.current() dict, with `room` forced when the user just answered the room question."""
+    try:
+        import room_scope
+        if not room_scope.enabled():
+            return None
+        if room:
+            return {"room": room, "sure": True, "candidates": [room], "status": "ok"}
+        if _names_room(n):
+            return None
+        cur = room_scope.current()
+    except Exception:  # noqa: BLE001 — never a reason to fail a command
+        return None
+    return cur if cur["status"] == "ok" and cur["candidates"] else None
+
+
+def _ask_room(n, rooms, handler):
+    _ROOMQ.update(n=n, rooms=list(rooms), handler=handler, at=time.time())
+    return f"{', '.join(rooms[:-1])} oder {rooms[-1]}, {_sir()}?".replace(", ?", "?")
+
+
+def _room_answer(n):
+    """The reply to "Wohnzimmer oder Schlafzimmer?": a room name, maybe with "im"/"in der"."""
+    if time.time() - _ROOMQ["at"] > ROOM_ASK_S or not _ROOMQ["rooms"]:
+        return None
+    s = re.sub(r"\b(bitte|jarvis|sir|im|in der|in|ich bin|bin im|hier|das|die|der)\b", " ", n)
+    s = " ".join(s.split())
+    picked = [r for r in _ROOMQ["rooms"] if r.lower() == s or (s and s in r.lower().split())]
+    if len(picked) != 1:
+        if re.fullmatch(r"(nein|nichts|egal|vergiss es|abbrechen|lass)( es)?", s):
+            _ROOMQ.update(n="", rooms=[], handler=None, at=0.0)
+            return f"Gut, dann nicht, {_sir()}."
+        return None
+    asked, handler = _ROOMQ["n"], _ROOMQ["handler"]
+    _ROOMQ.update(n="", rooms=[], handler=None, at=0.0)
+    return handler(asked, room=picked[0])
+
+
+CLIMATE_STEP = float(os.environ.get("JARVIS_CLIMATE_STEP", "1"))
+CLIMATE_DEFAULT = float(os.environ.get("JARVIS_CLIMATE_DEFAULT", "20"))
+_RELATIVE = re.compile(r"\s*(?:(?:mach|machs|mach es|es|bitte|etwas|ein bisschen|ein wenig|noch|die|heizung|"
+                       r"die heizung|stell|stelle|dreh|drehe)\s+)*(wärmer|kälter|kühler)"
+                       r"(?:\s+(?:bitte|machen|stellen|drehen))*(?:\s+(?:im|in der)\s+[a-zäöüß ]+?)?\s*")
+
+
+def _climate_rooms(groups, n, room=None):
+    """[(name, entities)] — the room named in n, or the one the user is in (room_scope)."""
+    rooms = []
+    for name, entities in groups.items():
+        if not isinstance(entities, list):
+            continue
+        alias = _norm(str(name)).strip()
+        pattern = r"(?<!\w)" + re.escape(alias) + r"(?:heizung|thermostat(?:e)?)?(?!\w)"
+        if (room and alias == _norm(room).strip()) or (not room and alias and re.search(pattern, n)):
+            rooms.append((str(name), [str(eid) for eid in entities if str(eid).startswith("climate.")]))
+    return rooms
+
+
+def _climate_step(name, entities, warmer):
+    """"wärmer" / "kälter": one CLIMATE_STEP from the current target. An off thermostat (or one at its
+    5-7 degree frost guard) goes on at CLIMATE_DEFAULT for "wärmer"; "kälter" leaves it off."""
+    import jarvis_mcp
+    targets, off = [], True
+    for eid in entities:
+        st = jarvis_mcp._ha(f"/api/states/{eid}") or {}
+        t = (st.get("attributes") or {}).get("temperature")
+        if st.get("state") not in ("off", "unavailable") and isinstance(t, (int, float)) and t > 7:
+            targets.append(float(t))
+            off = False
+    if off and not warmer:
+        return f"Die Heizung {_in(name)} ist schon aus, {_sir()}."
+    goal = CLIMATE_DEFAULT if off else max(targets) + (CLIMATE_STEP if warmer else -CLIMATE_STEP)
+    goal = max(5.0, min(30.0, round(goal * 2) / 2))
+    for eid in entities:
+        if off:
+            res = jarvis_mcp._home("home_control", {"entity_id": eid, "service": "set_hvac_mode",
+                                                    "data": {"hvac_mode": "heat"}})
+            if not res or not res.startswith("Erledigt"):
+                return f"{name}: {res or 'Keine Rückmeldung von Home Assistant.'}"
+        res = jarvis_mcp._home("home_control", {"entity_id": eid, "service": "set_temperature",
+                                                "data": {"temperature": goal}})
+        if not res or not res.startswith("Erledigt"):
+            return f"{name}: {res or 'Keine Rückmeldung von Home Assistant.'}"
+    return f"Heizung {_in(name)} {'an, ' if off else 'auf '}{goal:g} Grad, {_sir()}."
+
+
+def _in(room):
+    return ("in der " if room.lower().endswith("e") else "im ") + room
+
+
+def _climate(n, room=None):
     """Handle clear room-thermostat commands locally so the read-only HA MCP is never used for them."""
-    if QUESTION.search(n) or not re.search(r"heiz\w*|thermostat|temperatur|wärme|grad", n):
+    if QUESTION.search(n) or not re.search(r"heiz\w*|thermostat|temperatur|wärme|grad|kälter|kühler", n):
         return None
     raw = _raw()
     temperature = re.search(r"\bauf\s+(\d{1,2}(?:[.,]\d)?)\b|(\d{1,2}(?:[.,]\d)?)\s*(?:°\s*C|grad)\b", raw, re.I)
     off = re.search(r"\b(aus|ausschalten|ausmachen|abschalten)\b", n)
     on = re.search(r"\b(an|einschalten|anmachen|anschalten)\b", n)
-    if sum((bool(off), bool(on), bool(temperature))) != 1:
+    relative = _RELATIVE.fullmatch(n)
+    if sum((bool(off), bool(on), bool(temperature), bool(relative))) != 1:
         return None
     try:
         import jarvis_profile
         groups = jarvis_profile._load_home().get("climate_groups", {})
     except Exception:  # noqa: BLE001
         return None
-    rooms = []
-    for room, entities in groups.items():
-        if not isinstance(entities, list):
-            continue
-        alias = _norm(str(room)).strip()
-        pattern = r"(?<!\w)" + re.escape(alias) + r"(?:heizung|thermostat(?:e)?)?(?!\w)"
-        if alias and re.search(pattern, n):
-            rooms.append((str(room), [str(eid) for eid in entities if str(eid).startswith("climate.")]))
+    rooms = _climate_rooms(groups, n, room)
+    if not rooms:
+        scope = _scope(n)                          # no room named: the room the user is in
+        if scope:
+            known = {_norm(str(g)).strip() for g in groups}
+            cands = [r for r in scope["candidates"] if _norm(r).strip() in known]
+            if len(cands) > 1:
+                return _ask_room(n, cands, _climate)
+            if cands:
+                rooms = _climate_rooms(groups, n, cands[0])
     if len(rooms) != 1 or not rooms[0][1]:
         return None
     name, entities = rooms[0]
+    if relative:
+        return _climate_step(name, entities, relative.group(1) == "wärmer")
     if temperature:
         raw_value = temperature.group(1) or temperature.group(2)
         data = {"temperature": float(raw_value.replace(",", "."))}
@@ -511,7 +652,9 @@ def _climate(n):
     return " ".join(results)
 
 
-def _home(n):
+def _home(n, room=None, force=None):
+    """Switch what n names. `room` comes from the answer to "Wohnzimmer oder Schlafzimmer?",
+    `force` (devices) from the "ja" to "Soll ich das im Wohnzimmer anmachen?"."""
     if QUESTION.search(n):
         return None                                # a question never switches anything
     on = re.search(r"\b(an|ein|einschalten|anmachen|anschalten|aktivier\w*)\s*$|\b(schalt\w* .* an|mach\w* .* an)\b", n.strip())
@@ -530,9 +673,12 @@ def _home(n):
     except Exception:  # noqa: BLE001
         return None
     hint = next((d for w, d in _DOMAIN_WORDS.items() if re.search(r"\b" + w, n)), None)
-    best = _match_devices(n, hint, devs)
+    scope = None if force is not None else _scope(n, room)
+    import room_scope
+    prefer = room_scope.eids(scope["room"]) if scope and scope["sure"] else None
+    best = list(force) if force is not None else _match_devices(n, hint, devs, prefer)
     import learning
-    learned = learning.alias(n)                    # a wording Claude once resolved for us
+    learned = None if force is not None else learning.alias(n)   # a wording Claude once resolved for us
     if learned:
         by_eid = {d["eid"]: d for d in devs}
         best = [by_eid.get(e) or {"eid": e, "dom": e.split(".")[0], "name": e.split(".", 1)[1].replace("_", " "),
@@ -543,6 +689,21 @@ def _home(n):
         best = lights                              # "mach alle Lichter aus"
     elif not best or len(best) > 4:
         return None
+    service = "turn_on" if (on or pct or scene) and not off else "turn_off"
+    if scope and not re.search(r"\balle\b", n):
+        if not scope["sure"]:
+            # walking, or a radar ghost: ask only when the two rooms would mean different devices
+            # (a learned wording means fixed devices: there the room changes nothing)
+            picks = set() if learned else {tuple(sorted(d["eid"] for d in _match_devices(n, hint, devs, room_scope.eids(r))))
+                                           for r in scope["candidates"]}
+            if len(picks - {()}) > 1:
+                return _ask_room(n, scope["candidates"], _home)
+        elif service == "turn_on" and _generic(n, devs) and not any(d["eid"] in prefer for d in best):
+            # "Licht an" where there is none: ask before switching on another room. "Licht aus" just
+            # goes ahead — switching off what is on elsewhere is what is meant, and harmless.
+            where = sorted({room_scope.room_of(d["eid"]) for d in best})
+            if "" not in where:
+                return _ask_elsewhere(n, scope["room"], best, where, hint)
     if len(best) > 1 and not hint and not all(d["dom"] == "light" for d in best):
         # "mach Wohnzimmer an" with a lamp and a socket: an answer the user gave once is kept
         # (learning.choice); otherwise ask back locally and remember the answer — no model needed
@@ -551,7 +712,6 @@ def _home(n):
         if not picked:
             return _ask_choice(n, best)
         best = picked
-    service = "turn_on" if (on or pct or scene) and not off else "turn_off"
     # Only what keeps things alive is protected — a lamp called "LED PC" is just a lamp.
     if service == "turn_off" and any(d["dom"] != "light" and (PROTECTED_OFF.search(d["name"])
                                                                or PROTECTED_OFF.search(d["eid"])) for d in best):
@@ -578,13 +738,27 @@ def _home(n):
 # An ambiguous target ("mach Wohnzimmer an": a lamp and a socket) is asked back once; the
 # answer names one of them ("die Lampe", "beide") and is kept for that wording (learning.choice).
 CHOICE_S = 60
-_CHOICE = {"n": "", "devs": [], "at": 0.0}
+_CHOICE = {"n": "", "devs": [], "at": 0.0, "yes": False}
+_KIND = {"light": "kein Licht", "switch": "keine passende Steckdose", "fan": "keinen Ventilator"}
 
 
 def _ask_choice(n, devs):
-    _CHOICE.update(n=n, devs=devs, at=time.time())
+    _CHOICE.update(n=n, devs=devs, at=time.time(), yes=False)
     names = [d["name"] for d in devs]
     return f"Meinen Sie {', '.join(names[:-1])} oder {names[-1]}, {_sir()}? Oder beide?".replace(", ?", "?")
+
+
+def _generic(n, devs):
+    """Only generic words ("Licht an"), no device's own name: then the room decides what is meant."""
+    words = {w for w in n.split() if w not in _FILLER and len(w) > 1}
+    return not any(d["words"] & words for d in devs)
+
+
+def _ask_elsewhere(n, here, devs, where, hint):
+    """"Licht an" in a room without a lamp: offer the one in the other room; "ja" switches it."""
+    _CHOICE.update(n=n, devs=devs, at=time.time(), yes=True)
+    return (f"{_in(here)[0].upper()}{_in(here)[1:]} habe ich {_KIND.get(hint, 'nichts Passendes')}, {_sir()}. "
+            f"Soll ich das {' und '.join(_in(w) for w in where)} anmachen?").replace(", .", ".")
 
 
 def _choice(n):
@@ -592,6 +766,15 @@ def _choice(n):
         return None
     s = re.sub(r"\b(bitte|jarvis|sir|die|der|das|den|meine|ich meine|meinte)\b", " ", n).strip()
     devs = _CHOICE["devs"]
+    if _CHOICE.get("yes"):
+        asked = _CHOICE["n"]
+        if re.fullmatch(r"(ja|jo|jep|gerne|gern|genau|okay|ok|mach|mach das|mach mal|ja mach|ja gerne)( es)?", s):
+            _CHOICE.update(n="", devs=[], at=0.0, yes=False)
+            return _home(asked, force=devs)
+        if re.fullmatch(r"(nein|nee|ne|lass|lass es|nicht|egal|vergiss es)", s):
+            _CHOICE.update(n="", devs=[], at=0.0, yes=False)
+            return f"Gut, dann nicht, {_sir()}."
+        return None
     if re.fullmatch(r"\s*(beide|alle|beides|alle beide)\s*", s):
         picked = devs
     else:
@@ -696,7 +879,31 @@ def _routine(n):
     if dry:
         return dry                                 # "Was passiert, wenn ich Gute Nacht sage?" — nothing runs
     r = routines.find(_raw())
-    return routines.run(r, run_local) if r else None
+    if not r:
+        return None
+    reply = routines.run(r, run_local)
+    try:                                           # proactive mode: the evening check follows "Gute Nacht"
+        import proactive
+        import proactive_config
+        cfg = proactive_config.load()
+        if proactive.owns("evening") and r.get("name", "").lower() == str(cfg.triggers.evening.get("routine") or "").lower():
+            reply = f"{reply} {proactive.evening(cfg)}".strip()
+    except Exception:  # noqa: BLE001 — the routine itself has run; the check is a bonus
+        pass
+    return reply
+
+
+GOOD_NIGHT = re.compile(r"^\s*(jarvis )?gute nacht( jarvis)?\s*$")
+
+
+def _proactive(n):
+    import proactive
+    if GOOD_NIGHT.match(n) and proactive.owns("evening"):
+        import routines
+        if not routines.find(_raw()):
+            return proactive.evening()             # no routine of that name: the check alone
+        return None                                # _routine runs it and appends the check
+    return proactive.handle(n, _raw())
 
 
 def _pronounce(n):
@@ -941,7 +1148,7 @@ def _habits(n):
     return user_habits.handle(n)
 
 
-LOCAL_HANDLERS = [_emergency, _choice, _personality, _focus, _daytime, _context, _tasks, _desktop, _routine, _timers, _lists, _pronounce,
+LOCAL_HANDLERS = [_emergency, _proactive, _choice, _room_answer, _personality, _focus, _daytime, _context, _tasks, _desktop, _routine, _timers, _lists, _pronounce,
                   _outage, _pi_reports, _report, _selfcheck, _habits, _episodes, _wellbeing, _maintenance, _situation, _coach, _costs, _announce, _tv, _alerts,
                   _unifi, _media, _pc, _commute, _parcels, _printer, _followup, _home_state, _climate, _home,
                   _music, _time, _date, _sun, _weather, _solar, _nas, _pi]

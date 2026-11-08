@@ -112,6 +112,7 @@ import energy_coach  # noqa: E402
 import homelab_review  # noqa: E402
 import house_habits  # noqa: E402
 import weather_alerts  # noqa: E402
+import proactive  # noqa: E402
 import reflection  # noqa: E402
 import suggestions  # noqa: E402
 import weekly_review  # noqa: E402
@@ -147,7 +148,7 @@ REMOTE_HOSTS = {h.strip().lower() for h in os.environ.get("JARVIS_REMOTE_HOSTS",
 REMOTE_PUBLIC = {"/pair.html", "/manifest.webmanifest", "/icon-180.png", "/icon-512.png",
                  "/icon-192.png", "/icon-32.png", "/favicon.svg"}   # what pair.html and the manifest name
 LOCAL_ONLY = {"/api/permission/request", "/api/internal", "/api/pair/start", "/api/devices", "/api/devices/revoke",
-              "/api/hud"}   # the desktop card belongs to the PC's own HUD, not a phone
+              "/api/hud", "/api/proactive/trigger"}   # the desktop card belongs to the PC's own HUD, not a phone
 API_TOKEN = secrets.token_urlsafe(32)
 DASHBOARD_LAYOUTS = frozenset(("tablet", "stark", "classic", "aurora", "ivory", "midnight", "cockpit",
                                "bento", "horizon", "editorial", "neon", "zen", "orbit", "solstice",
@@ -182,6 +183,10 @@ def _save_dashboard_layout(device, layout):
 BOOT_ID = secrets.token_hex(4)          # the page reloads itself when this changes
 LAST_POST = [time.time()]               # any talking, listening or speaking counts as activity
 RUN_LOCK = threading.Lock()
+# The voice engine cancels its run when the user keeps talking and asks again with the whole sentence.
+# The old turn may still be fetching mail for its context or ending its Claude process: the new one
+# waits for it instead of getting 409, which Jarvis read out as "ich komme nicht an mein Gehirn".
+RUN_WAIT_S = float(os.environ.get("JARVIS_RUN_WAIT_S", "20"))
 MAX_JSON = 1024 * 1024
 MAX_AUDIO = 12 * 1024 * 1024
 class _Session:
@@ -556,6 +561,10 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/notifications":
             return self._json(notifications())
 
+        if p == "/api/proactive":
+            # the proactive mode for the iPad: history of announcements, why one was held, learned feedback
+            return self._json(proactive.status())
+
         if p == "/api/note":
             title = parse_qs(urlparse(self.path).query).get("id", [""])[0].lower()
             for n in memory.build_graph()["nodes"]:
@@ -617,7 +626,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "unauthorized"}, 401)
         ctype = self.headers.get("Content-Type", "").split(";", 1)[0].lower()
         if p in {"/api/run", "/api/speak", "/api/new", "/api/cancel", "/api/balance", "/api/duck", "/api/musichold", "/api/hud", "/api/restart",
-                 "/api/layout", "/api/output", "/api/speak/stop", "/api/pair/start", "/api/devices", "/api/devices/revoke"} and ctype != "application/json":
+                 "/api/layout", "/api/output", "/api/speak/stop", "/api/pair/start", "/api/devices", "/api/devices/revoke", "/api/proactive/feedback",
+                 "/api/proactive/trigger"} and ctype != "application/json":
             return self._json({"error": "application/json required"}, 415)
         try:
             raw = self._read(MAX_AUDIO if p == "/api/listen" else MAX_JSON)
@@ -672,8 +682,18 @@ class Handler(BaseHTTPRequestHandler):
                         return self._json({"sonos": sonos.label(target), "seconds": secs, "voice": provider})
                     except sonos.Fallback as e:
                         log.warning("Sonos: %s", str(e.__cause__)[:160])
+                        note = sonos.failed(target)
+                        if note:         # said once per outage, so the user knows why the PC answers
+                            try:
+                                data, mime, _ = voice.speak_full(f"{note} {text}")
+                                return self._bytes(data, mime)
+                            except Exception:  # noqa: BLE001 — the answer itself is already made
+                                pass
                         self._bytes(e.data, e.mime)
                         return
+                note = sonos.fallback_note() if not target and sonos.chosen(self._layout_device()) == sonos.AUTO else ""
+                if note:
+                    text = f"{note} {text}"
                 if body.get("stream"):
                     return self._speak_stream(*voice.speak_stream(text))
                 data, mime, provider = voice.speak_full(text)
@@ -707,6 +727,28 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/devices/revoke":
             did = (json.loads(raw or b"{}") or {}).get("id")
             return self._json({"ok": devices.revoke(did)})
+
+        if p == "/api/proactive/feedback":
+            # the iPad's "unwichtig" button on one announcement, or the reset of what was learned
+            try:
+                body = json.loads(raw or b"{}") or {}
+            except (ValueError, TypeError):
+                return self._json({"error": "bad json"}, 400)
+            kind = str(body.get("kind") or "")[:40]
+            if body.get("reset"):
+                proactive.reset_feedback(kind or None)
+            elif kind in proactive.KIND_NAMES:
+                proactive.feedback(kind)
+            else:
+                return self._json({"error": "unknown kind"}, 400)
+            return self._json({"ok": True, "learned": proactive.learned()})
+
+        if p == "/api/proactive/trigger":
+            # diagnosis and acceptance on the PC: run arrival / morning / evening / instant now, with real data
+            mode = str((json.loads(raw or b"{}") or {}).get("mode") or "")
+            if mode not in ("arrival", "morning", "evening", "instant"):
+                return self._json({"error": "unknown mode"}, 400)
+            return self._json({"ok": True, "text": proactive.trigger(mode)})
 
         if p == "/api/wakelog":
             # the wake word on a phone or iPad reports what it did (wakeword.device_log)
@@ -786,7 +828,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "stopped": stopped})
 
         if p == "/api/run":
-            if not RUN_LOCK.acquire(blocking=False):
+            got = RUN_LOCK.acquire(blocking=False)
+            if not got and self.headers.get("X-Jarvis-Voice") == "1":
+                runtime.cancel_active()          # the engine dropped that run already: make sure it ends
+                got = RUN_LOCK.acquire(timeout=RUN_WAIT_S)
+            if not got:
                 return self._json({"error": "JARVIS is already processing a request"}, 409)
             try:
                 return self._stream(raw)
@@ -942,6 +988,8 @@ class Handler(BaseHTTPRequestHandler):
         if hit and not is_briefing:
             emit(dict(t="focus", id=hit))
         ACTIVE["emit"] = emit
+        if runtime.cancelled_since(getattr(self, "_cancel_mark", runtime.cancel_mark())):
+            return                               # cancelled while the context was fetched: nobody waits for it
         reply, usage, before = [], {}, memory.build_graph(force=True)["total"]
         failed, tools = None, []
         try:
@@ -1057,6 +1105,7 @@ class Handler(BaseHTTPRequestHandler):
                   len(system), len(prefix), message, text, int((time.time() - t0) * 1000))
 
     def _stream(self, raw):
+        self._cancel_mark = runtime.cancel_mark()
         try:
             payload = json.loads(raw or b"{}")
         except ValueError:   # bad JSON or bytes that are not UTF-8 — both are ValueError

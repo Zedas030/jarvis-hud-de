@@ -56,8 +56,22 @@ _NOISE_SUBTYPES = {"hook_started", "hook_response", "post_turn_summary",
                    "compact_boundary", "mcp_status"}
 
 
+# Counts cancels: a turn that was cancelled before its Claude process started (still fetching mail
+# for the context, say) checks this before it starts one (cancelled_since).
+_CANCELS = [0]
+
+
+def cancel_mark():
+    return _CANCELS[0]
+
+
+def cancelled_since(mark):
+    return _CANCELS[0] != mark
+
+
 def cancel_active():
     with _ACTIVE_LOCK:
+        _CANCELS[0] += 1
         proc = _ACTIVE_PROC
     if proc is None or proc.poll() is not None:
         return False

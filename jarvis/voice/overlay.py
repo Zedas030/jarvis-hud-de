@@ -40,19 +40,40 @@ LOOK = {
     "blocked":     ("MIKRO AUS", "#ff6ba6", 0.0),
     "off":         ("PAUSE", "#6f8aa3", 0.08),
 }
+VISIBLE_S = 15        # a visible tab reports at least every 4 s; silent longer = closed without pagehide
 STATE = {"visible": True, "st": "off", "detail": "", "line": "", "tone": "", "at": 0.0}
+# Every HUD tab reports for itself (several can be open: a second window, a forgotten
+# tab). The card shows only when no tab is visible, otherwise a hidden tab in the
+# background would keep it up while you look at the HUD. {tab id: (visible, at)}
+TABS = {}
 _LOCK = threading.Lock()
 
 
 def report(data):
-    """From the HUD: {visible, st, detail, line, tone}. Cheap, no UI work on the request thread."""
+    """From the HUD: {tab, visible, st, detail, line, tone, gone}. Cheap, no UI work on the request thread."""
+    tab = str(data.get("tab") or "")[:40]
+    now = time.time()
     with _LOCK:
-        STATE.update({k: data[k] for k in ("visible", "st", "detail", "line", "tone") if k in data}, at=time.time())
+        if data.get("gone"):                    # tab closed or reloaded
+            TABS.pop(tab, None)
+            return
+        visible = bool(data.get("visible", True))
+        TABS[tab] = (visible, now)
+        for t, (_v, at) in list(TABS.items()):  # forget tabs that went quiet long ago
+            if now - at > STALE_S:
+                del TABS[t]
+        # a hidden tab must not overwrite what the visible one shows
+        if visible or not any(v for v, _at in TABS.values()):
+            STATE.update({k: data[k] for k in ("visible", "st", "detail", "line", "tone") if k in data}, at=now)
 
 
 def wanted():
+    now = time.time()
     with _LOCK:
-        return ENABLED and not STATE["visible"] and time.time() - STATE["at"] < STALE_S
+        if not ENABLED:
+            return False
+        fresh = [v for v, at in TABS.values() if now - at < (VISIBLE_S if v else STALE_S)]
+        return bool(fresh) and not any(fresh)
 
 
 def _tail(text, n=80):

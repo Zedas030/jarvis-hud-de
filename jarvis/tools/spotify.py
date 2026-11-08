@@ -120,7 +120,7 @@ def _api(method, path, retry=True, body=None):
     except urllib.error.HTTPError as e:
         if e.code == 401 and retry:
             _ACCESS["token"] = ""
-            return _api(method, path, retry=False)
+            return _api(method, path, retry=False, body=body)   # the retry must carry the same request
         return e.code, None
 
 
@@ -161,6 +161,15 @@ def _player():
     dev = state.get("device") or {}
     vol = dev.get("volume_percent") if dev.get("supports_volume", True) else None
     return bool(state.get("is_playing")), dev.get("id"), vol
+
+
+def active_device():
+    """(is playing, {id, name, type}) of the account's active device; (False, {}) when nothing is active."""
+    code, state = _api("GET", "/me/player")
+    if code != 200 or not state:
+        return False, {}
+    dev = state.get("device") or {}
+    return bool(state.get("is_playing")), {k: dev.get(k) for k in ("id", "name", "type")}
 
 
 def playing():
@@ -377,10 +386,12 @@ def pause_active():
     return True if not on else _ok(_api("PUT", "/me/player/pause" + _device_q(device))[0])
 
 
-def transfer(name):
+def transfer(name, track="", position_ms=0):
     """Move the playback to the device called `name` and play there: "die Musik vom Schlafzimmer ins Wohnzimmer".
     (True, device name) or (False, reason in German). Spotify only knows devices that are online and
-    logged into the account — a Sonos or Echo that is not in the list cannot be reached this way."""
+    logged into the account — a Sonos or Echo that is not in the list cannot be reached this way.
+    With `track` the device starts that track at `position_ms` instead: what a Sonos streams itself
+    (the wake-up music, Alexa) is no Connect session that Spotify could hand over."""
     if not configured():
         return False, "Spotify ist nicht eingerichtet."
     try:
@@ -394,7 +405,11 @@ def transfer(name):
             if not dev:
                 known = ", ".join(sorted(d.get("name", "") for d in devs if d.get("name")))
                 return False, f"Spotify kennt kein Gerät „{name}“. Gerade erreichbar: {known or 'keins'}."
-            code, _ = _api("PUT", "/me/player", body={"device_ids": [dev["id"]], "play": True})
+            if track:
+                code, _ = _api("PUT", "/me/player/play" + _device_q(dev["id"]),
+                               body={"uris": [track], "position_ms": max(0, int(position_ms or 0))})
+            else:
+                code, _ = _api("PUT", "/me/player", body={"device_ids": [dev["id"]], "play": True})
             if not _ok(code):
                 STATUS["error"] = f"transfer {code}"
                 return False, f"Spotify hat die Übergabe an „{dev['name']}“ nicht angenommen (HTTP {code})."

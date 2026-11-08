@@ -30,6 +30,7 @@ hoerprobe_*.wav
 
 # personal configuration — only the example goes into the repo
 config/home.json
+config/proactive.yaml
 config/routines.json
 config/learned.json
 config/aussprache.json

@@ -308,6 +308,12 @@
 
   function tiles(d) {
     var h = d.house || {}, m = d.mail || {}, me = d.me || {}, out = [];
+    if (h.where) {     // where the presence sensors see me: answers and "Licht an" go there
+      var w = h.where;
+      out.push(tile(w.offline ? 'warn' : '', 'Raum', esc(w.offline ? 'unbekannt' : (w.room || 'niemand')), '',
+        w.offline ? 'Home Assistant nicht erreichbar' : !w.room ? 'kein Melder sieht jemanden'
+          : w.sure ? 'Präsenzmelder' : 'unsicher · ' + esc((w.candidates || []).join(' oder ')), null, null));
+    }
     if (!h.error && h.solar_w != null) {
       out.push(tile(h.solar_w > 50 ? 'good' : '', 'Solar', num(h.solar_w), 'W', 'heute ' + num(h.gen_kwh, 1) + ' kWh', null, 'energy'));
       out.push(tile(h.soc != null && h.soc < 20 ? 'warn' : '', 'Speicher', num(h.soc), '%',

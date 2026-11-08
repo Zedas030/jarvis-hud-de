@@ -17,6 +17,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 HERE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # the repository
@@ -1052,7 +1053,13 @@ def _music_room(room):
     if not spotify.configured():
         return "Dafür brauche ich das Spotify-Login (docs/installation.md → Konfiguration → Spotify), die Medientasten erreichen nur den PC."
     name, device, player = speakers.spotify_device(room)
-    ok, text = spotify.transfer(device or room)     # an unknown room may still be a device name ("PC")
+    src = _speaker_stream(player)
+    if src and src[0] == player:
+        return f"Die Musik läuft schon im {name}."
+    if src and spotify.playing()[0]:
+        src = None                                  # a real Connect session plays as well: that one moves
+    extra = {"track": src[1], "position_ms": src[2]} if src else {}
+    ok, text = spotify.transfer(device or room, **extra)   # an unknown room may still be a device name ("PC")
     fallback = speakers.spotify_fallback(room) if name else ""
     for _ in range(MUSIC_ROOM_TRIES - 1):
         # the soundbar drops out of Spotify's list now and then and is back a moment later: ask again
@@ -1060,14 +1067,17 @@ def _music_room(room):
         if ok or not fallback or not text.startswith("Spotify kennt kein Gerät"):
             break
         time.sleep(MUSIC_ROOM_PAUSE_S)
-        ok, text = spotify.transfer(device)
+        ok, text = spotify.transfer(device, **extra)
     if not ok and fallback and text.startswith("Spotify kennt kein Gerät"):
-        ok, text = spotify.transfer(fallback)
+        ok, text = spotify.transfer(fallback, **extra)
         if ok:
+            _pause_speaker(src)
             return (f"„{device}“ ist für Spotify gerade nicht erreichbar, die Musik läuft ersatzweise auf "
                     f"„{text}“ im {name}.")
+    if ok:
+        _pause_speaker(src)
     via_ha = False
-    if not ok and player and text.startswith("Spotify kennt kein Gerät"):
+    if not ok and player and not src and text.startswith("Spotify kennt kein Gerät"):
         ok, text, via_ha = _music_room_ha(player), "", True
         if not ok:
             return f"Der Lautsprecher im {name} ist für Spotify gerade nicht erreichbar, und auch über Home Assistant hat es nicht geklappt."
@@ -1078,6 +1088,43 @@ def _music_room(room):
     if not name:
         return f"Die Musik läuft jetzt auf „{text}“."
     return f"Die Musik läuft jetzt {article} {where}." + (" Dort fängt die Playlist von vorne an." if via_ha else "")
+
+
+def _speaker_stream(target_player=""):
+    """(HA player, spotify:track:…, position in ms) of a room speaker that streams Spotify itself — the Sonos with
+    the wake-up music or a song asked of Alexa. Spotify's API does not see that playback, so moving it means
+    starting the same track elsewhere. The target room's own player wins (the music is already there); None
+    when no speaker plays such a track or Home Assistant cannot be asked."""
+    import speakers
+    from datetime import datetime, timezone
+    players = [p for p in (speakers._cfg()[0].get(r, {}).get("player") for r in speakers.rooms()) if p]
+    players.sort(key=lambda p: p != target_player)
+    for p in players:
+        try:
+            s = _ha(f"/api/states/{p}") or {}
+        except Exception:  # noqa: BLE001 — HA down: nothing known to move
+            return None
+        a = s.get("attributes") or {}
+        m = re.search(r"spotify:track:([A-Za-z0-9]{22})", urllib.parse.unquote(str(a.get("media_content_id") or "")))
+        if s.get("state") != "playing" or not m:
+            continue
+        pos = float(a.get("media_position") or 0)
+        try:
+            pos += (datetime.now(timezone.utc) - datetime.fromisoformat(a["media_position_updated_at"])).total_seconds()
+        except (KeyError, TypeError, ValueError):
+            pass
+        return p, "spotify:track:" + m.group(1), int(max(0.0, pos) * 1000)
+    return None
+
+
+def _pause_speaker(src):
+    """Stop the speaker the music came from, once it plays in the new room."""
+    if not src:
+        return
+    try:
+        _ha("/api/services/media_player/media_pause", {"entity_id": src[0]})
+    except Exception:  # noqa: BLE001 — the account plays one stream at a time: Spotify stops it anyway
+        pass
 
 
 def _music_room_ha(player):

@@ -6,7 +6,8 @@ hand soon — all read-only, 0 tokens, once a day.
                  ("host:port"): days until they expire. Verified when possible; self-signed
                  ones are read from the raw certificate.
   docker images  on the Pi: how old the image of every running container is (days since it
-                 was built) — older than docker_max_days wants a pull
+                 was built) — older than docker_max_days wants a pull, unless the registry
+                 says the tag still points to that very image (upstream has not released since)
   backups        the last Hyper Backup run on the NAS (infra.backup_status): older than
                  backup_max_days is a finding
   NAS disks      a disk that is not "normal" (the dashboard's reading)
@@ -34,8 +35,13 @@ import hostos
 ENABLED = os.environ.get("JARVIS_MAINTENANCE", "1").strip() not in ("0", "false", "no", "off")
 FROM_HOUR = 9
 DEFAULTS = {"cert_warn_days": 14, "docker_max_days": 120, "backup_max_days": 3}
-DOCKER_AGES_CMD = ("command -v docker >/dev/null && docker ps --format '{{.Names}} {{.Image}}' | while read n i; do "
-                   "echo \"image $n $(docker image inspect --format '{{.Created}}' \"$i\" 2>/dev/null)\"; done; true")
+# 'image <container> <created> <image> <repo digests, comma-separated>'. Looked up by the container's
+# image id: an image pulled by digest has no local tag, so 'docker image inspect <tag>' would fail.
+DOCKER_AGES_CMD = ("command -v docker >/dev/null && docker ps --format '{{.Names}}' | while read n; do "
+                   "id=$(docker inspect --format '{{.Image}}' \"$n\" 2>/dev/null); "
+                   "echo \"image $n $(docker image inspect --format '{{.Created}}' \"$id\" 2>/dev/null) "
+                   "$(docker inspect --format '{{.Config.Image}}' \"$n\" 2>/dev/null) "
+                   "$(docker image inspect --format '{{join .RepoDigests \",\"}}' \"$id\" 2>/dev/null)\"; done; true")
 _CACHE = {"day": "", "items": []}
 
 
@@ -116,21 +122,47 @@ def _pi(cmd):
     return out.stdout if out.returncode == 0 or out.stdout.strip() else ""
 
 
-def parse_images(text, now=None):
-    """[(container, days old)] from 'image <name> <created ISO>' lines."""
+def parse_image_rows(text, now=None):
+    """[(container, days old, image, {repo digests})] from DOCKER_AGES_CMD's lines."""
     now = now or dt.datetime.now(dt.timezone.utc)
     out = []
-    for m in re.finditer(r"^image (\S+) (\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})", text, re.M):
+    for m in re.finditer(r"^image (\S+) (\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})\S*(?: (\S+))?(?: (\S+))?", text, re.M):
         created = dt.datetime.fromisoformat(f"{m.group(2)}T{m.group(3)}+00:00")
-        out.append((m.group(1), (now - created).days))
+        digests = {d.rpartition("@")[2] for d in (m.group(5) or "").split(",") if "@" in d}
+        out.append((m.group(1), (now - created).days, m.group(4) or "", digests))
     return out
 
 
-def images(cfg):
+def parse_images(text, now=None):
+    """[(container, days old)] from 'image <name> <created ISO> ...' lines."""
+    return [(name, days) for name, days, _, _ in parse_image_rows(text, now)]
+
+
+def _still_newest(image, have, digest=None):
+    """True when the tag in the registry still points to the image the Pi runs: then there is
+    nothing to pull, however old it is. Pinned images, local builds (no repo digest) and any
+    registry error give False — then the age warning stands."""
+    if not image or "@" in image or not have:
+        return False
+    if digest is None:
+        import updates
+        digest = updates._registry_digest
+    try:
+        return digest(image) in have
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def images(cfg, digest=None):
     out = []
     limit = int(cfg.get("docker_max_days", 120))
-    for name, days in parse_images(_pi(DOCKER_AGES_CMD)):
+    for name, days, image, have in parse_image_rows(_pi(DOCKER_AGES_CMD)):
         old = days > limit
+        if old and _still_newest(image, have, digest):
+            out.append(dict(what=f"Container {name}", days=None, severity="ok",
+                            text=f"Container {name}: Image {days} Tage alt, aber schon die neueste Fassung — "
+                                 "es gibt nichts zu ziehen."))
+            continue
         out.append(dict(what=f"Container {name}", days=limit - days, severity="warn" if old else "ok",
                         text=(f"Das Image von {name} auf dem Pi ist {days} Tage alt — ein Pull wäre fällig." if old
                               else f"Container {name}: Image {days} Tage alt.")))

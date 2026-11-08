@@ -158,6 +158,9 @@ def _speak(room, words):
 def check(states, now=None):
     if not ENABLED:
         return
+    import proactive
+    if proactive.owns("morning"):
+        return                     # the proactive mode briefs the morning (its own triggers, same briefing_day)
     cfg = config()
     fired = triggered(states, cfg["triggers"], _LAST)
     now = now or dt.datetime.now()

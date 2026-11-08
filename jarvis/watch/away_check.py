@@ -16,7 +16,11 @@ Jarvis announced in the meantime (events.notices_since) — the package, the dis
 outage. An open "Ausschalten" proposal from the leaving is dropped: the user is home now.
 
 config/home.json:
-  "away_check": {"switches": {"switch.tv": 30, "switch.kuche_boiler": 20}, "lights": true, "media": true}
+  "away_check": {"switches": {"switch.tv": 30, "switch.kuche_boiler": 20}, "lights": true, "media": true,
+                 "media_skip": "^media_player\\.(spotify_|sonos_)"}
+  media_skip     players left out (regex on the entity id). Always skipped: HA's Spotify integration
+                 (media_player.spotify_*), which is the whole account — "playing" there is often the phone
+                 on the road. Music at home while away is the HA automation "Musik läuft zu Hause …".
 """
 import datetime as dt
 import os
@@ -43,12 +47,15 @@ def _name(s):
 def still_on(states, cfg):
     """[(entity, label)] of what runs although nobody is home."""
     out = []
+    skip = re.compile(cfg.get("media_skip") or r"^media_player\.spotify_", re.I)
+    spotify_account = re.compile(r"^media_player\.spotify_", re.I)
     for eid, s in sorted(states.items()):
         dom = eid.split(".")[0]
         if dom == "light" and cfg.get("lights", True) and s.get("state") == "on":
             out.append((eid, _name(s)))
         elif dom == "media_player" and cfg.get("media", True) and s.get("state") == "playing":
-            out.append((eid, _name(s)))
+            if not (skip.search(eid) or spotify_account.search(eid)):
+                out.append((eid, _name(s)))
     for eid, min_w in (cfg.get("switches") or {}).items():
         s = states.get(eid) or {}
         if s.get("state") != "on":
@@ -154,6 +161,10 @@ def _welcome(back, away_since):
     for p in proposals.pending():
         if p["kind"] == "switch_off" and p.get("source") == "away_check":
             proposals.resolve(p["id"], "obsolete")         # the user is home and can switch himself
+    import proactive
+    if proactive.owns("arrival"):
+        proactive.on_arrival(away_since)              # the arrival briefing, in the room, once it is known
+        return "proaktiv"
     text = welcome(events.notices_since(away_since))
     events.publish("say", text, kind="welcome")
     return text

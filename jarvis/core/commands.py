@@ -471,8 +471,8 @@ def lean_prefix(message, groups=()):
     if net:
         out.append(net[:500])
     try:
-        import whereabouts
-        where = whereabouts.line()               # the presence sensors: which room he is in
+        import room_scope
+        where = room_scope.line()                # the presence sensors: which room he is in, what is there
         if where:
             out.append(where)
     except Exception:  # noqa: BLE001 — a bonus, never a reason to fail a turn

@@ -32,6 +32,7 @@ Das Sprachmodell ist die **Claude-Code-CLI** im Abo-Modus. Es gibt also keine AP
 - [Was alles möglich ist](#was-alles-möglich-ist)
 - [Bedienung](#bedienung)
 - [Stimme: Anbieter-Kette, Sprach-Engine, Notbetrieb](#stimme-anbieter-kette-sprach-engine-notbetrieb)
+- [Proaktiver Modus](#proaktiver-modus)
 - [Gedächtnis und Lernen](#gedächtnis-und-lernen)
 - [Sicherheitsmodell](#sicherheitsmodell)
 - [Architektur](#architektur)
@@ -55,7 +56,7 @@ Das Sprachmodell ist die **Claude-Code-CLI** im Abo-Modus. Es gibt also keine AP
 <td valign="top">🧠 <b>Echtes Gedächtnis</b><br>Obsidian-Vault mit Themen-Notizen, Gesprächsprotokoll, Episoden je Tag, Ablaufdaten und Papierkorb. Jede Erinnerung mit prüfbarer Herkunft.</td>
 </tr>
 <tr>
-<td valign="top">🏠 <b>Weiß, wo du bist</b><br>Präsenzmelder je Raum: Antwort aus dem Lautsprecher des Raums, Musik wandert mit, Heizung folgt, Morgen-Briefing beim ersten Gang ins Bad.</td>
+<td valign="top">🏠 <b>Weiß, wo du bist</b><br>Präsenzmelder je Raum: Antwort aus dem Lautsprecher des Raums, „Licht an“ und „wärmer“ gelten für den Raum, Musik wandert mit, Heizung folgt, Morgen-Briefing beim ersten Gang ins Bad.</td>
 <td valign="top">📣 <b>Meldet sich selbst</b><br>Waschmaschine fertig, Zeit loszufahren, Paket kommt, Speicher voll, Unwetter, neues Gerät im WLAN. Mit Ruhezeiten, nie ohne Karte.</td>
 </tr>
 <tr>
@@ -83,7 +84,7 @@ Die Architektur trennt **Router** (Regeln), **Werkzeuge** (MCP-Server) und **Ged
 
 **Zuhause**
 - *„Mach das Licht im Wohnzimmer auf 40 Prozent“*, *„Ist die Waschmaschine noch an?“*, *„Szene Kino“*, danach zwei Minuten lang *„heller“*, *„wieder aus“*, *„und im Schlafzimmer auch“*.
-- Jarvis weiß über Präsenzmelder, in welchem Raum du bist: Antworten kommen aus dem Lautsprecher dort, *„hol die Musik zu mir“* schiebt Spotify auf den Lautsprecher des Raums, die Heizung folgt dir, nachts sagt der Sonos gute Nacht.
+- Jarvis weiß über Präsenzmelder, in welchem Raum du bist: Antworten kommen aus dem Lautsprecher dort, *„Licht an“*, *„TV an“* und *„wärmer“* ohne Raum gelten für diesen Raum (bei unklarer Lage fragt er *„Wohnzimmer oder Schlafzimmer?“*), *„hol die Musik zu mir“* schiebt Spotify auf den Lautsprecher des Raums, die Heizung folgt dir, nachts sagt der Sonos gute Nacht.
 - *„Sag im Wohnzimmer: Essen ist fertig“* spricht über den Echo Dot, im Schlafzimmer über den Sonos. Antworten wahlweise aus dem Echo, mit Alexas Stimme.
 - *„Wie viel liefert die Solaranlage?“*, *„Was kostet mich der PC im Monat?“*, *„Wer zieht Standby-Strom?“*, *„Wann soll ich die Spülmaschine anmachen?“* (Energie-Coach aus Akkustand, Verbrauch und Sonnenvorhersage).
 - Verlässt du die Wohnung und es läuft noch etwas, kommt ein Vorschlag „Ausschalten“ aufs Handy. Kommst du heim: *„Willkommen zurück. Während du weg warst: …“*
@@ -133,6 +134,31 @@ Fish Audio ─▶ ElevenLabs ─▶ Lokal (Chatterbox GPU · Piper CPU) ─▶ A
 - **Notbetrieb:** Ist das Claude-Kontingent erschöpft oder bricht ein Aufruf ab, antwortet die erste verfügbare Stufe aus **Groq → Gemini → Ollama**, mit denselben Jarvis-Werkzeugen und Bestätigungskarten. Gemini sieht nie Mail, Kalender oder Gesundheit.
 
 Details, Messwerte und das Tuning-Protokoll: [Stimme und Sprach-Engine](docs/sprache.md).
+
+---
+
+## Proaktiver Modus
+
+Jarvis meldet sich von selbst – ausgelöst durch Ereignisse, nicht durch feste Uhrzeiten:
+
+- **Heimkommen:** Kurz-Briefing in dem Raum, in dem dich die Präsenzmelder sehen – mit dem, was während deiner
+  Abwesenheit passiert ist.
+- **Morgens:** beim ersten Betreten des Bads nach der Nacht (Wetter, Warnungen, Termine, Pakete).
+- **Sofort:** Wasser, Rauch, Unwetter, auseinanderlaufende NOAH-Akkus, ein Gerät offline.
+- **„Jarvis, gute Nacht“:** Geräte noch an, offene Fenster, früher Termin morgen.
+
+Jede Meldung ist *kritisch*, *wichtig* oder *nett zu wissen*. Ein Briefing ist höchstens 25 Sekunden lang, den
+Rest zeigt das iPad. Schon Gesagtes wiederholt er erst, wenn sich etwas ändert; „Jarvis, mehr dazu“ liefert
+Details.
+
+**Er schweigt** – nur Kritisches kommt durch – in der Ruhezeit, bei „Ruhe für eine Stunde“ oder „heute keine
+Ansagen“, im Gäste-Modus, während eines Telefonats oder Videocalls (PC-Mikrofon, iPhone-Fokus) und wenn du nicht
+zu Hause bist. Sagst du öfter „unwichtig“, sinkt die Stufe dieser Meldungsart; das ist in der Glocke einsehbar
+und zurücksetzbar. In Home Assistant gibt es die Schalter *Jarvis Proaktiv*, *Jarvis Gäste-Modus* und
+*Jarvis Ruhe*.
+
+Einrichten, alle Regeln, Quellen und Secrets: [Proaktiver Modus](docs/proaktiv.md). Ein- und ausschalten:
+`config/proactive.yaml` → `enabled` (Vorlage `config/proactive.example.yaml`).
 
 ---
 
@@ -305,6 +331,7 @@ Der PC bleibt das Gehirn. iPhone und iPad greifen über **Tailscale** per HTTPS 
 | [Installation und Konfiguration](docs/installation.md) | Schnellstart, lokale Stimmen, alle `.env`-Einstellungen, Entwicklung und Diagnose |
 | [Bedienung](docs/bedienung.md) | Sprechen und tippen, Karten, Persönlichkeit, Alltag, Windows, iPhone/iPad, Handy |
 | [Stimme und Sprach-Engine](docs/sprache.md) | Anbieter-Kette, Zuhören/Unterbrechen/Weitersprechen mit Messwerten, Notbetrieb |
+| [Proaktiver Modus](docs/proaktiv.md) | Auslöser, Schweige-Regeln, Quellen, Sprachbefehle, Feedback, Secrets, Linux |
 | [Gedächtnis und Lernen](docs/gedaechtnis.md) | Ressourcen, Kontext, Aufgaben, lernfähige Module, Vault |
 | [Architektur und Effizienz](docs/architektur.md) | Alle Komponenten, Router und schlanker Modus, Projektstruktur |
 | [Sicherheitsmodell](docs/sicherheit.md) | Die Regeln im Code; Details in [SECURITY.md](SECURITY.md) |

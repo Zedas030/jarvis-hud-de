@@ -326,7 +326,8 @@ class RoomViaHomeAssistant(unittest.TestCase):
         self.patches = [
             mock.patch.object(speakers, "_cfg", return_value=({"Schlafzimmer": {"player": "media_player.sz"},
                                                                "Wohnzimmer": {"notify": "notify.echo"}}, None)),
-            mock.patch.object(jarvis_mcp, "_ha", side_effect=lambda path, body=None: self.ha.append((path, body)))]
+            mock.patch.object(jarvis_mcp, "_ha", side_effect=lambda path, body=None: self.ha.append((path, body))),
+            mock.patch.object(jarvis_mcp, "_speaker_stream", return_value=None)]   # no Sonos streams by itself here
         for p in self.patches:
             p.start()
         self.music = jarvis_mcp._music

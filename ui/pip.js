@@ -9,6 +9,8 @@
 (function () {
   if (window.__remote) return;          // a phone or iPad has no desktop of this PC
   var last = '', lastAt = 0;
+  // each tab reports under its own id, so a forgotten hidden tab cannot keep the card up
+  var tab = Math.random().toString(36).slice(2, 12);
 
   /* While he talks: the tail of his answer. Otherwise: what you said last. */
   function line(st) {
@@ -28,11 +30,13 @@
     var st = (btn && btn.dataset.state) || 'off';
     // the tone tag of the answer ([dry], [amused] …) sets the panda's face
     var tone = typeof answerText === 'string' && typeof lastTone === 'function' ? lastTone(answerText) || '' : '';
-    return { visible: visible, st: st, detail: label ? label.textContent : '', line: line(st), tone: tone };
+    return { tab: tab, visible: visible, st: st, detail: label ? label.textContent : '', line: line(st), tone: tone };
   }
 
-  function send(force, visible) {
-    var body = JSON.stringify(snapshot(visible === undefined ? !document.hidden : visible));
+  function send(force, visible, gone) {
+    var snap = snapshot(visible === undefined ? !document.hidden : visible);
+    if (gone) snap.gone = true;
+    var body = JSON.stringify(snap);
     var now = performance.now();
     if (!force && body === last && now - lastAt < 4000) return;
     last = body; lastAt = now;
@@ -44,7 +48,7 @@
   window.Pip = { tick: function () { if (document.hidden) send(false); } };
   document.addEventListener('visibilitychange', function () { send(true); });
   // Tab closed or reloaded: take the card away at once instead of waiting for it to go stale.
-  window.addEventListener('pagehide', function () { send(true, true); });
+  window.addEventListener('pagehide', function () { send(true, false, true); });
   setInterval(function () { send(false); }, 1000);
   send(true);
 })();

@@ -116,6 +116,17 @@ class HomeRules(Base):
         self.local("Mach das Licht im Wohnzimmer an", "home")
         self.assertEqual(CALLS, [("light.wohnzimmer", "turn_on", {})])
 
+    def test_compound_room_device(self):
+        # "Schlafzimmerlicht aus" went to Claude every time: the compound matched no device name
+        self.local("Wohnzimmerlicht aus.", "home")
+        self.local("Küchenlicht an", "home")
+        self.assertEqual(CALLS, [("light.wohnzimmer", "turn_off", {}), ("light.kueche", "turn_on", {})])
+
+    def test_compound_split_is_narrow(self):
+        self.assertEqual(router._norm("Schlafzimmerlicht aus"), " schlafzimmer licht aus ")
+        for word in ("tageslicht", "leselampe", "zimmerlicht"):
+            self.assertEqual(router._norm(word).strip(), word)
+
     def test_dim(self):
         self.local("Licht Wohnzimmer auf 40 Prozent", "home")
         self.assertEqual(CALLS, [("light.wohnzimmer", "turn_on", {"brightness_pct": 40})])
@@ -681,7 +692,11 @@ class MusicRooms(Base):
         self.local("Schieb die Musik vom Schlafzimmer ins Wohnzimmer", "music")
         self.local("Mach im Schlafzimmer die Musik aus dem Wohnzimmer an", "music")
         self.local("Musik ins Schlafzimmer", "music")
-        self.assertEqual(self.moved, ["Wohnzimmer", "Wohnzimmer", "Schlafzimmer", "Schlafzimmer"])
+        self.local("Es läuft im Schlafzimmer Musik und ich sitze im Wohnzimmer", "music")
+        self.local("Die Musik spielt noch im Wohnzimmer, hol sie ins Schlafzimmer", "music")
+        self.local("Ich bin im Wohnzimmer, die Musik läuft im Schlafzimmer", "music")
+        self.assertEqual(self.moved, ["Wohnzimmer", "Wohnzimmer", "Schlafzimmer", "Schlafzimmer",
+                                      "Wohnzimmer", "Schlafzimmer", "Wohnzimmer"])
 
     def test_plain_music_commands_and_lights_stay_as_they_were(self):
         route("Musik leiser")

@@ -955,6 +955,7 @@ var Notes = {
         var cls = t.status === 'COMPLETED' ? 'ok' : (/FAIL|TIMED|CANCEL/.test(t.status) ? 'bad' : 'prop');
         return '<li class="' + cls + '"><small>' + esc(t.status) + ' · ' + t.done + '/' + t.total + '</small><b>'
           + esc(t.title) + '</b>' + (t.report ? '<br>' + esc(t.report) : '') + '</li>'; }).join('') + '</ul>';
+      html += await Notes.proactive(t);
       html += '<h3>MELDUNGEN</h3><ul>' + (n.items.map(function (e) {
         return '<li><small>' + t(e.at) + ' · ' + esc(e.kind) + '</small>' + esc(e.text) + '</li>'; }).join('')
         || '<li>Noch keine Meldungen seit dem Start.</li>') + '</ul>';
@@ -963,8 +964,43 @@ var Notes = {
       $('#noteBody').innerHTML = html;
       $('#noteAge').textContent = 'Profil ' + (n.persona || '—');
     } catch (e) { $('#noteBody').innerHTML = '<p class="hint">Nicht erreichbar.</p>'; }
+  },
+  /* The proactive mode: what Jarvis said by himself, what he kept back and why, what he learned from "unwichtig". */
+  proactive: async function (t) {
+    var p;
+    try { p = await (await fetch('/api/proactive', { headers: headers() })).json(); } catch (e) { return ''; }
+    if (!p || !p.enabled) return '';
+    var html = '<h3>ANSAGEN · PROAKTIV</h3><ul>';
+    if (p.quiet_until) html += '<li class="held">Ruhe bis ' + t(p.quiet_until) + ' — nur Kritisches.</li>';
+    Object.keys(p.down || {}).forEach(function (k) {
+      html += '<li class="bad"><small>Quelle aus</small>' + esc(k) + ': ' + esc(p.down[k].error) + '</li>'; });
+    (p.learned || []).forEach(function (l) {
+      html += '<li class="prop"><small>gelernt</small>' + esc(l.name) + ': ' + l.marks + '× unwichtig → ' + esc(l.level)
+        + (l.level !== l.base ? ' (statt ' + esc(l.base) + ')' : '')
+        + '<button class="pa" data-reset="' + esc(l.kind) + '">zurücksetzen</button></li>'; });
+    var rows = (p.history || []).filter(function (r) { return r.action !== 'briefing'; }).slice(0, 25);
+    html += rows.map(function (r) {
+      var cls = r.action === 'gesprochen' ? 'ok' : (r.action === 'zurückgehalten' ? 'held' : '');
+      var btn = r.kind && r.level && r.level !== 'kritisch' && r.action !== 'info'
+        ? '<button class="pa" data-kind="' + esc(r.kind) + '">unwichtig</button>' : '';
+      return '<li class="' + cls + '"><small>' + t(r.at) + ' · ' + esc(r.action) + (r.level ? ' · ' + esc(r.level) : '')
+        + (r.room ? ' · ' + esc(r.room) : '') + '</small>' + esc(r.text)
+        + (r.reason ? ' <span class="pa-why">(' + esc(r.reason) + ')</span>' : '') + btn + '</li>';
+    }).join('') || '<li>Noch keine Ansagen.</li>';
+    return html + '</ul>';
   }
 };
+document.addEventListener('click', async function (e) {
+  var b = e.target.closest && e.target.closest('button.pa');
+  if (!b) return;
+  var body = b.dataset.reset ? { reset: true, kind: b.dataset.reset } : { kind: b.dataset.kind };
+  b.disabled = true;
+  try {
+    await fetch('/api/proactive/feedback', { method: 'POST', body: JSON.stringify(body),
+      headers: headers({ 'Content-Type': 'application/json' }) });
+    b.textContent = b.dataset.reset ? 'zurückgesetzt' : 'notiert';
+  } catch (err) { b.textContent = 'Fehler'; }
+});
 (function initNotes() {
   var bell = document.getElementById('btnBell');
   if (!bell) return;

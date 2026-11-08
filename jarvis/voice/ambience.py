@@ -16,6 +16,11 @@ EVERY = float(os.environ.get("JARVIS_AMBIENCE_EVERY", "20"))
 # Players that never make sound in the room (a phone's media session, a cast group's copy, …).
 IGNORE = re.compile(os.environ.get("JARVIS_AMBIENCE_IGNORE", r"^$"), re.I)
 STALE_S = 120            # an answer older than this counts as "nothing known"
+# HA's Spotify integration is the whole account, not a speaker: "playing" there may be the phone on the
+# road. The speaker that plays at home reports itself (Sonos, Echo); the account is judged in step().
+SPOTIFY_ACCOUNT = re.compile(os.environ.get("JARVIS_AMBIENCE_SPOTIFY_ACCOUNT", r"^media_player\.spotify_"), re.I)
+# Spotify Connect device types that travel with a person: they only count while someone is at home.
+PORTABLE = {"smartphone", "tablet", "wearable", "automobile", "watch"}
 
 # Titles, channels and apps that mean a match is on; everything else with video is TV.
 SPORT = re.compile(
@@ -39,7 +44,7 @@ def classify(states):
             continue
         a = s.get("attributes") or {}
         name = a.get("friendly_name") or eid
-        if IGNORE.search(eid) or IGNORE.search(name):
+        if IGNORE.search(eid) or IGNORE.search(name) or SPOTIFY_ACCOUNT.search(eid):
             continue
         if a.get("is_volume_muted") is True:
             continue
@@ -59,11 +64,28 @@ def classify(states):
     return "", names
 
 
+def someone_home(states):
+    """True when a person.* is home — or when HA has no person at all (nothing to judge by)."""
+    people = [s.get("state") for s in states or [] if (s.get("entity_id") or "").startswith("person.")]
+    return not people or "home" in people
+
+
+def spotify_at_home(states):
+    """Spotify plays and it is audible here: a speaker or the PC, or a phone/tablet while someone is home."""
+    import spotify
+    if not spotify.configured():
+        return False
+    on, dev = spotify.active_device()
+    if not on:
+        return False
+    return str(dev.get("type") or "").lower() not in PORTABLE or someone_home(states)
+
+
 def step():
     import briefing
-    import spotify
-    kind, players = classify(briefing._ha_states())
-    spotify_playing = spotify.configured() and spotify.playing()[0]
+    states = briefing._ha_states()
+    kind, players = classify(states)
+    spotify_playing = spotify_at_home(states)
     if kind == "music" and not spotify_playing:
         kind, players = "", []
     elif not kind and spotify_playing:

@@ -240,6 +240,35 @@ class Maintenance(unittest.TestCase):
         self.assertEqual(maintenance.backup_age("Aufgabe: ok, zuletzt 27.10.2026", dt.date(2026, 10, 29)), 2)
         self.assertIsNone(maintenance.backup_age("nichts"))
 
+    def test_old_image_that_is_still_newest(self):
+        now = dt.datetime(2026, 11, 7, tzinfo=UTC)
+        text = ("image noah 2025-02-19T10:00:00.1Z ghcr.io/x/noah:latest ghcr.io/x/noah@sha256:aaa\n"
+                "image fritz 2025-01-01T00:00:00Z pdreker/fritz:latest pdreker/fritz@sha256:old\n"
+                "image ha 2025-01-01T00:00:00Z ghcr.io/ha/ha:1@sha256:pin ghcr.io/ha/ha@sha256:pin\n"
+                "image local 2025-01-01T00:00:00Z local:1.0 \n"
+                "image young 2026-11-01T00:00:00Z y/y:latest y/y@sha256:y\n")
+        rows = maintenance.parse_image_rows(text, now)
+        self.assertEqual(rows[0], ("noah", 625, "ghcr.io/x/noah:latest", {"sha256:aaa"}))
+        self.assertEqual(rows[3][3], set())
+        self.assertEqual(maintenance.parse_images(text, now)[0], ("noah", 625))
+        reg = {"ghcr.io/x/noah:latest": "sha256:aaa", "pdreker/fritz:latest": "sha256:new"}
+        asked = []
+
+        def digest(image):
+            asked.append(image)
+            return reg[image]
+        with mock.patch("maintenance._pi", return_value=text), \
+                mock.patch("maintenance.parse_image_rows", lambda t: rows):
+            got = {i["what"]: i for i in maintenance.images({"docker_max_days": 120}, digest)}
+        self.assertEqual(got["Container noah"]["severity"], "ok")
+        self.assertIn("neueste Fassung", got["Container noah"]["text"])
+        self.assertEqual(got["Container fritz"]["severity"], "warn")      # registry has something newer
+        self.assertEqual(got["Container ha"]["severity"], "warn")         # pinned: not asked
+        self.assertEqual(got["Container local"]["severity"], "warn")      # local build: nothing to ask
+        self.assertEqual(got["Container young"]["severity"], "ok")
+        self.assertEqual(asked, ["ghcr.io/x/noah:latest", "pdreker/fritz:latest"])   # only old, pullable ones
+        self.assertFalse(maintenance._still_newest("a/b:1", {"sha256:x"}, lambda i: 1 / 0))   # registry down
+
     def test_describe_from_items(self):
         rows = [dict(what="Zertifikat nas", days=12, severity="warn", text="Das Zertifikat von nas läuft in 12 Tagen ab."),
                 dict(what="Container pihole", days=100, severity="ok", text="Container pihole: Image 20 Tage alt.")]

@@ -63,5 +63,54 @@ class AbortedRequests(unittest.TestCase):
     def test_real_errors_still_show(self):
         self.assertIn("ValueError", self.report(ValueError("kaputt")))
 
+class BusyRun(unittest.TestCase):
+    """Talking on: the voice engine cancels its run and asks again while the old turn is still ending.
+    It used to get 409 and Jarvis said "ich komme nicht an mein Gehirn" (07.11.2026)."""
+    def post(self, voice):
+        import json
+        import threading
+        import urllib.error
+        import urllib.request
+        from unittest import mock
+        srv = server.Server(("127.0.0.1", 0), server.Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        port = srv.server_address[1]
+        headers = {"content-type": "application/json", "X-Jarvis-Token": server.API_TOKEN,
+                   "Host": f"127.0.0.1:{port}", "Origin": f"http://127.0.0.1:{port}"}
+        if voice:
+            headers["X-Jarvis-Voice"] = "1"
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/run", data=json.dumps({"message": "Mails"}).encode(),
+                                     headers=headers, method="POST")
+        server.RUN_LOCK.acquire()                       # the old turn
+        threading.Timer(0.3, server.RUN_LOCK.release).start()
+        try:
+            with mock.patch.object(server, "PORT", port), \
+                    mock.patch.object(server.runtime, "cancel_active") as cancel, \
+                    mock.patch.object(server.Handler, "_stream", lambda self, raw: self._json({"ok": True})):
+                try:
+                    with urllib.request.urlopen(req, timeout=10) as r:
+                        return r.status, cancel.called
+                except urllib.error.HTTPError as e:
+                    return e.code, cancel.called
+        finally:
+            srv.shutdown()
+            srv.server_close()
+            import time
+            time.sleep(0.35)                            # the timer has given the lock back
+
+    def test_voice_engine_waits_for_the_old_turn(self):
+        self.assertEqual(self.post(voice=True), (200, True))
+
+    def test_hud_still_gets_busy(self):
+        self.assertEqual(self.post(voice=False), (409, False))
+
+    def test_cancelled_turn_starts_no_claude(self):
+        import runtime
+        mark = runtime.cancel_mark()
+        self.assertFalse(runtime.cancelled_since(mark))
+        runtime.cancel_active()
+        self.assertTrue(runtime.cancelled_since(mark))
+
+
 if __name__ == "__main__":
     unittest.main()

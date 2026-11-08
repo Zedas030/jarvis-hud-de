@@ -14,6 +14,7 @@ class Overlay(unittest.TestCase):
     def setUp(self):
         overlay.ENABLED = True
         overlay.STATE.update(visible=True, st="off", detail="", line="", at=0.0)
+        overlay.TABS.clear()
 
     def test_shows_only_while_the_tab_is_hidden(self):
         overlay.report({"visible": False, "st": "speaking", "detail": "Spricht", "line": "Guten Tag"})
@@ -23,8 +24,26 @@ class Overlay(unittest.TestCase):
 
     def test_goes_away_when_the_hud_stops_reporting(self):
         overlay.report({"visible": False, "st": "listening"})
-        overlay.STATE["at"] = time.time() - overlay.STALE_S - 1
+        overlay.TABS[""] = (False, time.time() - overlay.STALE_S - 1)
         self.assertFalse(overlay.wanted(), "tab closed or browser gone: no card left behind")
+
+    def test_a_hidden_second_tab_does_not_show_it_over_the_visible_one(self):
+        overlay.report({"tab": "a", "visible": True, "st": "listening"})
+        overlay.report({"tab": "b", "visible": False, "st": "off"})
+        self.assertFalse(overlay.wanted(), "you are looking at the HUD in tab a")
+        self.assertEqual(overlay.STATE["st"], "listening", "the hidden tab does not overwrite the state")
+        overlay.report({"tab": "a", "visible": False, "st": "listening"})
+        self.assertTrue(overlay.wanted(), "now no tab is visible")
+
+    def test_closed_tab_is_forgotten(self):
+        overlay.report({"tab": "a", "visible": False, "st": "busy"})
+        overlay.report({"tab": "a", "gone": True})
+        self.assertFalse(overlay.wanted())
+
+    def test_visible_tab_that_went_silent_no_longer_blocks_it(self):
+        overlay.report({"tab": "a", "visible": False, "st": "busy"})
+        overlay.TABS["b"] = (True, time.time() - overlay.VISIBLE_S - 1)
+        self.assertTrue(overlay.wanted(), "tab b was closed without a goodbye")
 
     def test_switched_off(self):
         overlay.ENABLED = False

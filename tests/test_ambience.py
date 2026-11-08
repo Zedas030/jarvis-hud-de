@@ -63,7 +63,7 @@ class Status(unittest.TestCase):
         import spotify
         with patch.object(briefing, "_ha_states", return_value=[player("echo", media_content_type="music")]), \
              patch.object(spotify, "configured", return_value=True), \
-             patch.object(spotify, "playing", return_value=(False, "echo")):
+             patch.object(spotify, "active_device", return_value=(False, {"id": "echo"})):
             ambience.step()
         self.assertEqual(ambience.status(), {"kind": "", "players": []})
 
@@ -72,9 +72,33 @@ class Status(unittest.TestCase):
         import spotify
         with patch.object(briefing, "_ha_states", return_value=[]), \
              patch.object(spotify, "configured", return_value=True), \
-             patch.object(spotify, "playing", return_value=(True, "echo")):
+             patch.object(spotify, "active_device", return_value=(True, {"id": "echo", "type": "Speaker"})):
             ambience.step()
         self.assertEqual(ambience.status(), {"kind": "music", "players": ["Spotify"]})
+
+
+    def _step(self, states, on, dev_type):
+        import briefing
+        import spotify
+        with patch.object(briefing, "_ha_states", return_value=states),              patch.object(spotify, "configured", return_value=True),              patch.object(spotify, "active_device", return_value=(on, {"id": "x", "type": dev_type})):
+            ambience.step()
+        return ambience.status()
+
+    def test_phone_on_the_road_is_not_music_at_home(self):
+        states = [player("spotify_konto", friendly_name="Spotify", source="iPhone", media_artist="X"),
+                  {"entity_id": "person.nutzer", "state": "not_home", "attributes": {}}]
+        self.assertEqual(self._step(states, True, "Smartphone"), {"kind": "", "players": []})
+
+    def test_phone_at_home_counts(self):
+        states = [{"entity_id": "person.nutzer", "state": "home", "attributes": {}}]
+        self.assertEqual(self._step(states, True, "Smartphone"), {"kind": "music", "players": ["Spotify"]})
+
+    def test_home_speaker_counts_even_when_nobody_is_home(self):
+        states = [{"entity_id": "person.nutzer", "state": "not_home", "attributes": {}}]
+        self.assertEqual(self._step(states, True, "Speaker")["kind"], "music")
+
+    def test_spotify_account_entity_is_not_a_room_player(self):
+        self.assertEqual(ambience.classify([player("spotify_konto", source="iPhone", media_artist="X")]), ("", []))
 
 
 class DeviceLog(unittest.TestCase):

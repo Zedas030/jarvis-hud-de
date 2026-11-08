@@ -20,8 +20,10 @@ import jarvis_profile as profile
 HA_URL = os.environ.get("HA_URL", "http://homeassistant.local:8123").strip().rstrip("/")
 HA_TOKEN = os.environ.get("HA_TOKEN", "").strip()
 TTL_S = float(os.environ.get("JARVIS_PRESENCE_TTL_S", "10"))
+# After this long without an answer from Home Assistant the last room is no longer trusted.
+STALE_S = float(os.environ.get("JARVIS_PRESENCE_STALE_S", "300"))
 UNKNOWN = {"", "unbekannt", "unknown", "unavailable", "none", "niemand"}
-_CACHE = {"at": 0.0, "room": ""}
+_CACHE = {"at": 0.0, "room": "", "ok_at": 0.0, "down": False}
 
 
 def entity():
@@ -44,14 +46,24 @@ def room(now=None):
                                      headers={"Authorization": f"Bearer {HA_TOKEN}"})
         with urllib.request.urlopen(req, timeout=5) as r:
             state = str((json.loads(r.read() or b"{}") or {}).get("state") or "")
-    except Exception:  # noqa: BLE001 — a Home Assistant hiccup keeps the last room for one more TTL
-        state = _CACHE["room"]
-    _CACHE.update(at=now, room="" if state.strip().lower() in UNKNOWN else state.strip())
+    except Exception:  # noqa: BLE001 — a hiccup keeps the last room, but only for STALE_S
+        last = _CACHE["room"] if now - _CACHE["ok_at"] < STALE_S else ""
+        _CACHE.update(at=now, room=last, down=True)
+        return last
+    # "unavailable": HA answers, but the helper (or its automation) is broken — as good as no sensors
+    down = state.strip().lower() == "unavailable"
+    _CACHE.update(at=now, room="" if state.strip().lower() in UNKNOWN else state.strip(), down=down,
+                  ok_at=_CACHE["ok_at"] if down else now)
     return _CACHE["room"]
 
 
+def offline():
+    """True while the last look failed: Home Assistant unreachable or the presence helper unavailable."""
+    return bool(_CACHE.get("down"))
+
+
 def forget():
-    _CACHE.update(at=0.0, room="")
+    _CACHE.update(at=0.0, room="", ok_at=0.0, down=False)
 
 
 def speaker(name):

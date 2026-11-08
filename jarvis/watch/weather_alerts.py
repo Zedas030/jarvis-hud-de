@@ -78,6 +78,9 @@ def new_ones(alerts, seen, now=None):
 
 
 def step():
+    import proactive
+    if proactive.owns("dwd"):
+        return                     # the proactive mode announces warnings, with its quiet rules and in the room
     alerts = fetch()
     found = []
 

@@ -78,5 +78,19 @@
   "presence_room": "input_select.room",
   "mic_rooms": {
     "Schlafzimmer": "iPad"
+  },
+  "room_scope": {
+    "areas": {
+      "Bathroom": "Bedroom"
+    },
+    "sensors": {
+      "Living room": [
+        "binary_sensor.living_room_presence"
+      ],
+      "Bedroom": [
+        "binary_sensor.bedroom_presence",
+        "binary_sensor.bathroom_presence"
+      ]
+    }
   }
 }

@@ -248,7 +248,12 @@ var VoiceClient = {
       case 'audio_end':
         if (VoiceClient.player) VoiceClient.player.port.postMessage({ t: 'pcm', id: ev.id, buf: new ArrayBuffer(0), end: true });
         break;
-      case 'room_audio': Live.speaking = true; setVoiceState('SPEAKING', 'hot'); break;
+      // The answer comes from the room's Echo or Sonos: music on another device of the account
+      // (Spotify Connect on the soundbar) must dip just the same as when this device speaks.
+      case 'room_audio':
+        if (!Live.speaking) { Live.speaking = true; setVoiceState('SPEAKING', 'hot'); }
+        duckMusic(true);
+        break;
       case 'gain': if (VoiceClient.player) VoiceClient.player.port.postMessage({ t: 'gain', value: ev.value, ms: ev.ms }); break;
       case 'flush': VoiceClient.flush(30); VoiceClient.pending = null; break;
       case 'speak_done':

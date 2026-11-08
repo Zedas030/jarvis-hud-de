@@ -586,6 +586,11 @@ body.remote .saytip{display:none}
 .notebody li{font-size:11px;line-height:1.45;border-left:2px solid var(--line);padding-left:8px}
 .notebody li.bad{border-color:#ff6b6b}.notebody li.ok{border-color:#5fe4a1}.notebody li.prop{border-color:#ffb84d}
 .notebody small{color:var(--ink-dim);margin-right:6px}
+.notebody li.held{border-color:#8fa3c4;opacity:.85}
+.notebody .pa-why{color:var(--ink-dim);font-style:italic}
+.notebody button.pa{margin-left:8px;font-size:10px;padding:3px 8px;border-radius:10px;border:1px solid var(--line);
+  background:transparent;color:var(--ink-dim);cursor:pointer;min-height:24px}
+.notebody button.pa:active{background:var(--line)}
 
 /* ── views: command centre (second monitor) and mini ── */
 body.view-wall .askbar,body.view-wall .stagetools #btnPair,body.view-wall .usage,body.view-wall #pLog{display:none}
