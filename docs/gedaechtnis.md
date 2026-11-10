@@ -35,8 +35,6 @@ Weitere Ausbaustufen auf der bestehenden Architektur. Alle laufen ohne LLM, auß
 
 Lokale Daten (in `.gitignore`): `logs/tasks.json`, `logs/metrics_daily.json`, `logs/docindex.sqlite`, `config/learned.history.jsonl`.
 
----
-
 ## Lernfähige Module
 
 Vier Module laufen im Hintergrund, jedes in einer eigenen Datei. Für alle gilt:
@@ -64,8 +62,6 @@ Hintergrundjobs nutzen Claude Haiku (`JARVIS_BACKGROUND_MODEL`) als eigenen kurz
 | `JARVIS_BACKGROUND_MODEL`, `JARVIS_PROPOSAL_DAYS` | `haiku`, `7` | Modell der Hintergrundjobs, Verfall offener Vorschläge |
 
 Lokale Daten (alle in `.gitignore`): `logs/health_daily.json`, `logs/proposals.json`, `logs/homelab_baseline.json`, `config/homelab.json`.
-
----
 
 ## Gedächtnis
 

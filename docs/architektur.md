@@ -33,8 +33,6 @@ Das Bild dazu steht im [README](../README.md#architektur). Hier die Komponenten 
 | `spotify.py` | Spotify-Web-API: Pause beim Aktivierungswort, danach weiter; play/pause/next auf jedem Gerät |
 | `ui/` | HUD (Vanilla JS, 3D-Wissensgraph ohne Abhängigkeiten) |
 
----
-
 ## Effizienz: Router und schlanker Modus
 
 Ein Standard-Aufruf von Claude Code schickt bei jeder Anfrage ~35.000 Tokens Grundlast mit:
@@ -68,8 +66,6 @@ Dazu kommt bei jedem Werkzeug ein zusätzlicher Zwischenschritt.
 - **Hintergrundjobs ohne LLM:** Dashboard, Netzwerk-Wächter, Briefing-Fakten.
 
 Jede Anfrage landet in `logs/usage.jsonl` (Route, Modell, Gruppen, Input/Cache/Output, API-Aufrufe).
-
----
 
 ## Projektstruktur
 

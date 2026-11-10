@@ -30,8 +30,6 @@ Sprechen, tippen, Karten, Persönlichkeit, Alltag und der Zugriff von iPhone, iP
 | Befehle | `/new`, `/status`, `/recall <Begriff>`, `/graph`, `/help` |
 | API-Guthaben | ✎ im Verbrauchsfeld: Stand eintragen, Ausgaben werden über die Cost API abgezogen |
 
----
-
 ## Kontrolle, Persönlichkeit und Alltag
 
 Sechs Ausbaustufen, jede mit eigenen Tests. Die Regeln dahinter stehen in [SECURITY.md](../SECURITY.md), der Aufbau in [ARCHITECTURE.md](../ARCHITECTURE.md).
@@ -86,8 +84,6 @@ Sechs Ausbaustufen, jede mit eigenen Tests. Die Regeln dahinter stehen in [SECUR
 | `JARVIS_WATCH_MAX`, `JARVIS_WATCH_PER_DAY` | `5`, `2` | Beobachtete Themen und Prüfungen pro Tag |
 | `JARVIS_PLAN_REMIND` | `09:00` | Uhrzeit der Erinnerungen in Plänen |
 | `config/profiles.json`, `config/scripts.json`, `config/homelab.json` | — | Eigene Profile, freigegebene Skripte, wichtige Geräte (Vorlagen `*.example.json`) |
-
----
 
 ## Unterwegs: iPhone und iPad
 

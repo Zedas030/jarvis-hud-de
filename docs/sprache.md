@@ -17,8 +17,6 @@ Fish Audio ─▶ ElevenLabs ─▶ Lokal (Chatterbox GPU · Piper CPU) ─▶ A
 - **Ton-Tags** wie `[dry]` werden von Anbietern umgesetzt, die sie beherrschen, und für alle anderen entfernt.
 - Die Kette ist reiner Code, sie verbraucht keine LLM-Tokens.
 
----
-
 ## Sprach-Engine: Zuhören, Unterbrechen, Weitersprechen
 
 Seit 02.11.2026 läuft das Gespräch nicht mehr im Browser, sondern in einer **Full-Duplex-Engine auf dem
@@ -119,8 +117,6 @@ Gespräch neu gelesen), zehn Sätze sprechen.
 | Erster Ton kommt spät | `tts.first_chunk_max_chars` | 70 → 50; Stimme in `TTS_CHAIN` prüfen (Piper streamt, Fish streamt, Chatterbox nicht) |
 | Versteht Fachbegriffe falsch | `stt.vocabulary` | Begriff ergänzen (oder `WHISPER_LOCAL_PROMPT`) |
 | Spricht ohne „Jarvis“ bei Fernsehen los | `wake.barge_needs_name_with_ambience` | true lassen; `JARVIS_WAKE=Jarvis` |
-
----
 
 ## Notbetrieb: Ersatz-Kette
 

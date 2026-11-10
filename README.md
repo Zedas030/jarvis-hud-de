@@ -1,30 +1,20 @@
-<div align="center">
+<p align="center">
+  <img src="docs/assets/banner.svg" alt="Jarvis: selbst gehosteter Sprachassistent mit Gedächtnis und Smart-Home-Steuerung, angetrieben von Claude Code" width="100%">
+</p>
 
-# J.A.R.V.I.S.
+<p align="center">
+  <a href="docs/installation.md">Installation</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="docs/funktionen.md">Funktionen</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="docs/architektur.md">Architektur</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="SECURITY.md">Sicherheit</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="https://github.com/Zedas030/jarvis-hud">English</a>
+</p>
 
-**Persönlicher Sprachassistent mit Gedächtnis, Smart-Home-Steuerung und HUD — angetrieben von Claude Code**
-
-![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
-![Platform](https://img.shields.io/badge/Plattform-Windows%2011-0078D6?logo=windows&logoColor=white)
-![Claude Code](https://img.shields.io/badge/Gehirn-Claude%20Code%20CLI-D97757)
-![Home Assistant](https://img.shields.io/badge/Smart%20Home-Home%20Assistant-41BDF5?logo=homeassistant&logoColor=white)
-![Local first](https://img.shields.io/badge/Sprache-lokal%20(Whisper%20%2B%20GPU--TTS)-2ea44f)
-
-</div>
-
----
-
-JARVIS ist ein selbst gehosteter Sprachassistent im Stil des Iron-Man-Computers. Man spricht frei im Browser, er antwortet mit natürlicher Stimme, steuert das Smart Home, kennt Kalender, Postfach und Heimnetz, und er baut sich ein **dauerhaftes Gedächtnis** in einem Obsidian-Vault auf.
+Jarvis ist ein selbst gehosteter Sprachassistent im Stil des Iron-Man-Computers. Man spricht frei im Browser, er antwortet mit natürlicher Stimme, steuert das Smart Home, kennt Kalender, Postfach und Heimnetz, und er baut sich ein **dauerhaftes Gedächtnis** in einem Obsidian-Vault auf.
 
 Das Sprachmodell ist die **Claude-Code-CLI** im Abo-Modus. Es gibt also keine API-Abrechnung pro Token. Damit das Kontingent lange reicht, beantwortet ein **lokaler Intent-Router** einfache Befehle komplett ohne LLM. Alles andere läuft als **schlanker, zustandsloser Aufruf** mit eigenem Kurz-Prompt und nur den Werkzeugen, die die Anfrage wirklich braucht.
 
-<div align="center">
-
-![Jarvis-HUD, Ansicht Sonnenlauf](docs/screenshots/hud.png)
-
-<sub>HUD am PC, Ansicht „Sonnenlauf“ · Instanz mit Beispielkonfiguration, keine persönlichen Daten</sub>
-
-</div>
+<p align="center">
+  <img src="docs/screenshots/hud.png" alt="Jarvis-HUD, Ansicht Sonnenlauf" width="100%">
+  <br>
+  <sub>Das HUD am PC, Ansicht „Sonnenlauf“. Beispielkonfiguration, keine persönlichen Daten.</sub>
+</p>
 
 ## Inhalt
 
@@ -42,34 +32,30 @@ Das Sprachmodell ist die **Claude-Code-CLI** im Abo-Modus. Es gibt also keine AP
 - [Dokumentation](#dokumentation)
 - [Raspberry Pi: Monitoring und Doku](#raspberry-pi-monitoring-und-doku)
 
----
-
 ## Highlights
 
 <table>
 <tr>
-<td width="50%" valign="top">🎙️ <b>Freihändig sprechen</b><br>Live-Mikrofon, Satzende-Erkennung, Reinreden unterbricht ihn. Aktivierungswort „Jarvis“ wahlweise lokal per openWakeWord.</td>
-<td width="50%" valign="top">⚡ <b>0 Tokens für Alltägliches</b><br>Licht, Steckdosen, Musik, Timer, Wecker, Uhrzeit, Wetter: ein lokaler Intent-Router antwortet in Millisekunden, ohne LLM.</td>
+<td width="50%" valign="top"><img src="docs/assets/icons/mic.svg" width="24" height="24" alt=""><br><b>Freihändig sprechen</b><br>Live-Mikrofon, Satzende-Erkennung, Reinreden unterbricht ihn. Aktivierungswort „Jarvis“ wahlweise lokal per openWakeWord.</td>
+<td width="50%" valign="top"><img src="docs/assets/icons/bolt.svg" width="24" height="24" alt=""><br><b>0 Tokens für Alltägliches</b><br>Licht, Steckdosen, Musik, Timer, Wecker, Uhrzeit, Wetter: ein lokaler Intent-Router antwortet in Millisekunden, ohne LLM.</td>
 </tr>
 <tr>
-<td valign="top">🪶 <b>Schlanke Claude-Aufrufe</b><br>Eigener Kurz-Prompt, nur die nötigen Werkzeuge, automatische Modellwahl. In Messungen über 25× weniger Tokens als ein Standard-Aufruf.</td>
-<td valign="top">🧠 <b>Echtes Gedächtnis</b><br>Obsidian-Vault mit Themen-Notizen, Gesprächsprotokoll, Episoden je Tag, Ablaufdaten und Papierkorb. Jede Erinnerung mit prüfbarer Herkunft.</td>
+<td valign="top"><img src="docs/assets/icons/feather.svg" width="24" height="24" alt=""><br><b>Schlanke Claude-Aufrufe</b><br>Eigener Kurz-Prompt, nur die nötigen Werkzeuge, automatische Modellwahl. In Messungen über 25× weniger Tokens als ein Standard-Aufruf.</td>
+<td valign="top"><img src="docs/assets/icons/memory.svg" width="24" height="24" alt=""><br><b>Echtes Gedächtnis</b><br>Obsidian-Vault mit Themen-Notizen, Gesprächsprotokoll, Episoden je Tag, Ablaufdaten und Papierkorb. Jede Erinnerung mit prüfbarer Herkunft.</td>
 </tr>
 <tr>
-<td valign="top">🏠 <b>Weiß, wo du bist</b><br>Präsenzmelder je Raum: Antwort aus dem Lautsprecher des Raums, „Licht an“ und „wärmer“ gelten für den Raum, Musik wandert mit, Heizung folgt, Morgen-Briefing beim ersten Gang ins Bad.</td>
-<td valign="top">📣 <b>Meldet sich selbst</b><br>Waschmaschine fertig, Zeit loszufahren, Paket kommt, Speicher voll, Unwetter, neues Gerät im WLAN. Mit Ruhezeiten, nie ohne Karte.</td>
+<td valign="top"><img src="docs/assets/icons/location.svg" width="24" height="24" alt=""><br><b>Weiß, wo du bist</b><br>Präsenzmelder je Raum: Antwort aus dem Lautsprecher des Raums, „Licht an“ und „wärmer“ gelten für den Raum, Musik wandert mit, Heizung folgt, Morgen-Briefing beim ersten Gang ins Bad.</td>
+<td valign="top"><img src="docs/assets/icons/bell.svg" width="24" height="24" alt=""><br><b>Meldet sich selbst</b><br>Waschmaschine fertig, Zeit loszufahren, Paket kommt, Speicher voll, Unwetter, neues Gerät im WLAN. Mit Ruhezeiten, nie ohne Karte.</td>
 </tr>
 <tr>
-<td valign="top">🛟 <b>Notbetrieb</b><br>Fällt Claude aus, übernimmt eine kostenlose Kette Groq → Gemini → Ollama mit denselben Werkzeugen. Die Stimme hat ihre eigene Kette aus Cloud-, GPU- und Gratis-Anbietern.</td>
-<td valign="top">🛡️ <b>Kontrolliert und ehrlich</b><br>Aktionsklassen im Code statt im Prompt, Bestätigungskarten, Schutz vor fremden Anweisungen in Mails und Webseiten, Audit-Log, Not-Aus, nur <code>localhost</code>.</td>
+<td valign="top"><img src="docs/assets/icons/fallback.svg" width="24" height="24" alt=""><br><b>Notbetrieb</b><br>Fällt Claude aus, übernimmt eine kostenlose Kette Groq → Gemini → Ollama mit denselben Werkzeugen. Die Stimme hat ihre eigene Kette aus Cloud-, GPU- und Gratis-Anbietern.</td>
+<td valign="top"><img src="docs/assets/icons/shield.svg" width="24" height="24" alt=""><br><b>Kontrolliert und ehrlich</b><br>Aktionsklassen im Code statt im Prompt, Bestätigungskarten, Schutz vor fremden Anweisungen in Mails und Webseiten, Audit-Log, Not-Aus, nur <code>localhost</code>.</td>
 </tr>
 <tr>
-<td valign="top">🖥️ <b>PC und Windows</b><br>Lautstärke, Apps, Bildschirmsperre, Fenster anordnen, Dateien und Zwischenablage, Bildschirmtext per lokaler OCR. Spotify wird leiser, solange Jarvis zuhört oder spricht.</td>
-<td valign="top">🛰️ <b>Heimnetz</b><br>Pi, NAS, FRITZ!Box, UniFi, Updates mit Freigabe-Karte, Wächter für neue Geräte. <i>„Lagebericht“</i> fasst Uptime Kuma, Sicherheitszentrale und Energie-Kreislauf zusammen.</td>
+<td valign="top"><img src="docs/assets/icons/desktop.svg" width="24" height="24" alt=""><br><b>PC und Windows</b><br>Lautstärke, Apps, Bildschirmsperre, Fenster anordnen, Dateien und Zwischenablage, Bildschirmtext per lokaler OCR. Spotify wird leiser, solange Jarvis zuhört oder spricht.</td>
+<td valign="top"><img src="docs/assets/icons/network.svg" width="24" height="24" alt=""><br><b>Heimnetz</b><br>Pi, NAS, FRITZ!Box, UniFi, Updates mit Freigabe-Karte, Wächter für neue Geräte. <i>„Lagebericht“</i> fasst Uptime Kuma, Sicherheitszentrale und Energie-Kreislauf zusammen.</td>
 </tr>
 </table>
-
----
 
 ## Was alles möglich ist
 
@@ -101,8 +87,6 @@ Die Architektur trennt **Router** (Regeln), **Werkzeuge** (MCP-Server) und **Ged
 - *„Fokus 45 Minuten“* sammelt Meldungen statt sie zu sprechen. *„Was zahle ich für die Haftpflicht?“* sucht in der gescannten Post (Paperless). *„Serie auf dem Fernseher weiterschauen“* (Jellyfin).
 - Ab 21 Uhr spricht er leiser und langsamer, in den Ruhezeiten flüstert er. Bei *„Mach Wohnzimmer an“* mit Lampe und Steckdose fragt er einmal nach und merkt sich die Antwort.
 
----
-
 ## Bedienung
 
 | Aktion | So geht’s |
@@ -114,19 +98,18 @@ Die Architektur trennt **Router** (Regeln), **Werkzeuge** (MCP-Server) und **Ged
 | Meldungen | Erscheinen mit gelbem Rand im Gespräch und werden vorgelesen; in den Ruhezeiten nur angezeigt. |
 | Bestätigen | Karte anklicken oder „bestätigt“ / „nein“ sagen. Ein bloßes „ja“ zählt bewusst nicht. |
 | Mini-Fenster | Verlässt du den Jarvis-Tab, steht unten rechts auf dem Desktop ein kleiner Roboter-Panda mit Zustand, letzter Zeile, **■ Stopp** und Mikrofon. |
-| Ausgabe wählen | 🔈 **Ton hier**, 🔊 **Wo ich bin**, **Echo Wohnzimmer** oder **Sonos Schlafzimmer**: pro Gerät, wo die Antworten zu hören sind. |
+| Ausgabe wählen | **Ton hier**, **Wo ich bin**, **Echo Wohnzimmer** oder **Sonos Schlafzimmer**: pro Gerät, wo die Antworten zu hören sind. |
 | Tippen und Befehle | Eingabefeld, `Enter`. `/new`, `/status`, `/recall <Begriff>`, `/graph`, `/help` |
 | Nachschlagen | Weiß Jarvis etwas nicht und steht es weder in den Notizen noch in den Werkzeugen, sucht er im Web. Private Daten kommen nie in die Suche. |
 
 Mehr dazu, inklusive Persönlichkeitsprofilen, Windows-Steuerung, 3D-Drucker, Updates, Pakete und Postfächer: [Bedienung](docs/bedienung.md).
 
----
-
 ## Stimme: Anbieter-Kette, Sprach-Engine, Notbetrieb
 
-```
-Fish Audio ─▶ ElevenLabs ─▶ Lokal (Chatterbox GPU · Piper CPU) ─▶ Azure ─▶ Google ─▶ Edge
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/voice-chain-dark.svg">
+  <img src="docs/assets/voice-chain-light.svg" alt="Stimmen-Kette: Fish Audio, ElevenLabs, lokal, Azure, Google, Edge" width="100%">
+</picture>
 
 - **Ausfallsichere Stimme:** Jeder Anbieter ist ein Adapter. Ist einer erschöpft (Guthaben, Quota, ungültiger Key), wird er bis zum Reset übersprungen, auch über Neustarts hinweg. Bei einem vorübergehenden Fehler wechselt nur der aktuelle Satz den Anbieter, ohne hörbaren Abbruch. Das HUD zeigt den aktiven Anbieter mit Restguthaben.
 - **Sprach-Engine auf dem Server:** Silero VAD, adaptives Satzende mit Teilergebnissen von Whisper, Unterbrechen in 150 ms, Weitersprechen am Satzanfang, wenn nur „mhm“ kam. Metriken je Durchgang für Grafana, Tuning in `config/voice.yaml`.
@@ -134,8 +117,6 @@ Fish Audio ─▶ ElevenLabs ─▶ Lokal (Chatterbox GPU · Piper CPU) ─▶ A
 - **Notbetrieb:** Ist das Claude-Kontingent erschöpft oder bricht ein Aufruf ab, antwortet die erste verfügbare Stufe aus **Groq → Gemini → Ollama**, mit denselben Jarvis-Werkzeugen und Bestätigungskarten. Gemini sieht nie Mail, Kalender oder Gesundheit.
 
 Details, Messwerte und das Tuning-Protokoll: [Stimme und Sprach-Engine](docs/sprache.md).
-
----
 
 ## Proaktiver Modus
 
@@ -160,8 +141,6 @@ und zurücksetzbar. In Home Assistant gibt es die Schalter *Jarvis Proaktiv*, *J
 Einrichten, alle Regeln, Quellen und Secrets: [Proaktiver Modus](docs/proaktiv.md). Ein- und ausschalten:
 `config/proactive.yaml` → `enabled` (Vorlage `config/proactive.example.yaml`).
 
----
-
 ## Gedächtnis und Lernen
 
 Der Vault ist ein Obsidian-Ordner mit Markdown-Notizen nach Themen (`Personen/Anna`, `Projekte/…`, `Geräte/…`), einem automatischen Gesprächsprotokoll und Episoden je Tag (Gespräche, Garmin, Meldungen, Ausfälle). Jarvis merkt und vergisst selbstständig (Ablaufdaten, Papierkorb), speichert nichts doppelt und überschreibt einen Widerspruch nie, sondern fragt nach. Jede Erinnerung hat eine prüfbare Herkunft.
@@ -172,8 +151,6 @@ Der Vault ist ein Obsidian-Ordner mit Markdown-Notizen nach Themen (`Personen/An
 - **Änderungen nur mit Karte:** Hintergrundjobs ändern nichts selbst. Sie legen einen Vorschlag ab, Jarvis erklärt ihn, und erst die Karte setzt ihn um.
 
 Resource Manager, Context Engine, Task Engine, Dokumentensuche und die lernfähigen Module im Einzelnen: [Gedächtnis und Lernen](docs/gedaechtnis.md).
-
----
 
 ## Sicherheitsmodell
 
@@ -188,32 +165,12 @@ Resource Manager, Context Engine, Task Engine, Dokumentensuche und die lernfähi
 
 Die Regeln im Detail: [Sicherheitsmodell](docs/sicherheit.md) und [SECURITY.md](SECURITY.md).
 
----
-
 ## Architektur
 
-```mermaid
-flowchart LR
-    subgraph Browser["Browser (HUD)"]
-        MIC[Mikrofon + VAD] --> STT
-        SPK[Wiedergabe Satz für Satz]
-    end
-    subgraph Server["server.py (127.0.0.1)"]
-        STT["/api/listen<br/>Whisper lokal"] --> RUN["/api/run"]
-        RUN --> R{"Intent-Router<br/>router.py"}
-        R -->|einfacher Befehl| LOCAL[Code-Handler<br/>0 Tokens]
-        R -->|echte Frage| LEAN["Schlanker Claude-Aufruf<br/>runtime.py"]
-        LEAN <--> MCP["Werkzeuge<br/>jarvis_mcp.py"]
-        SPEAK["/api/speak<br/>tts_chain.py"]
-    end
-    MCP --> HA[(Home Assistant)]
-    MCP --> NET[(Pi · NAS · Netzwerk)]
-    MCP --> PIM[(Kalender · Mail · Garmin)]
-    MCP --> VAULT[(Obsidian-Vault)]
-    LOCAL --> SPEAK
-    LEAN --> SPEAK
-    SPEAK --> SPK
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.svg">
+  <img src="docs/assets/architecture-light.svg" alt="Architektur: Browser, Spracherkennung, Intent-Router, lokaler Handler oder schlanker Claude-Aufruf mit Werkzeugen, Stimmen-Kette" width="100%">
+</picture>
 
 | Komponente | Aufgabe |
 |---|---|
@@ -230,8 +187,6 @@ flowchart LR
 | `ui/` | HUD (Vanilla JS, 3D-Wissensgraph ohne Abhängigkeiten), 19 Layouts pro Gerät |
 
 **Effizienz:** Eigener Kurz-Prompt statt Claude-Code-Standard, Werkzeuggruppen nach Bedarf, automatische Modellwahl (Haiku/Sonnet), Antwort-Cache, Prozess-Pool. In Messungen braucht ein Aufruf **über 25× weniger Tokens** als ein Standard-Aufruf; was der Router kann, kostet nichts. Alle Komponenten und die Messung: [Architektur und Effizienz](docs/architektur.md).
-
----
 
 ## Schnellstart
 
@@ -261,8 +216,6 @@ Alle Einstellungen stehen kommentiert in [`.env.example`](.env.example); persön
 ```powershell
 .venv\Scripts\python.exe -m unittest discover -s tests      # alle Tests: ohne Haus, Claude, Netz und Ton
 ```
-
----
 
 ## Zugangsdaten und eigene Werte
 
@@ -298,8 +251,6 @@ dient als Anschauung und wird nicht automatisch ausgeliefert.
 
 Der PC bleibt das Gehirn. iPhone und iPad greifen über **Tailscale** per HTTPS zu, von überall und ohne offenen Port im Router: `JARVIS_REMOTE=1`, einmal `tailscale serve --bg 8721`, dann die Adresse auf dem Gerät zum Home-Bildschirm legen und mit einem sechsstelligen Code koppeln. Das iPad zeigt ein eigenes Raum-Display mit Kacheln (Wetter, Haus, Energie, Tokens), das iPhone das HUD im Hochformat; Tippen auf das Mikrofon schaltet Live, Gedrückthalten ist Push-to-Talk. Vorschläge beim Verlassen der Wohnung und vor dem Losfahren kommen mit **Ja/Nein-Knöpfen** aufs Handy (Home-Assistant-App), die Antwort zählt wie die Karte. Einrichtung Schritt für Schritt: [Bedienung → Unterwegs](docs/bedienung.md#unterwegs-iphone-und-ipad).
 
----
-
 ## Projektstruktur
 
 ```
@@ -321,8 +272,6 @@ Der PC bleibt das Gehirn. iPhone und iPad greifen über **Tailscale** per HTTPS 
 └─ scripts/            measure_tokens · router_report · fetch_voice_models · install-ha-remote.ps1 …
 ```
 
----
-
 ## Dokumentation
 
 | Seite | Inhalt |
@@ -338,8 +287,6 @@ Der PC bleibt das Gehirn. iPhone und iPad greifen über **Tailscale** per HTTPS 
 | [ARCHITECTURE.md](ARCHITECTURE.md) · [SECURITY.md](SECURITY.md) · [ROADMAP.md](ROADMAP.md) | Modulkarte, Sicherheitsregeln und Ausbauplan für die Arbeit am Code |
 | [pi/](pi/README.md) | Monitoring und Doku des Raspberry Pi, der Jarvis das Haus, das Netz und DNS liefert |
 
----
-
 ## Raspberry Pi: Monitoring und Doku
 
 Der Pi im Heimnetz liefert Jarvis Home Assistant, DNS und das Monitoring; das HUD verlinkt beide Seiten oben rechts. Die Kopien unter [`pi/`](pi/README.md) sind anonymisiert.
@@ -354,7 +301,5 @@ Der Pi im Heimnetz liefert Jarvis Home Assistant, DNS und das Monitoring; das HU
 <td align="center"><sub>Pi-Dokumentation (Port 8091): Hardware, Dienste, Abschnitt Jarvis</sub></td>
 </tr>
 </table>
-
----
 
 <sub>Ursprünglich inspiriert von <a href="https://github.com/Itsme23476/jarvis-claude-code">jarvis-claude-code</a>. Für eine eigenständige Weitergabe vorher die Lizenzlage der Vorlage klären.</sub>

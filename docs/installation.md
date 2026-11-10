@@ -47,8 +47,6 @@ py -3.12 -m venv .venv-tts
 
 Der Server startet die GPU-Stimme automatisch, sobald `.venv-tts` existiert.
 
----
-
 ## Konfiguration
 
 Alle Einstellungen stehen kommentiert in [`.env.example`](../.env.example). Persönliche Daten gehören ausschließlich in `.env` und `config/home.json`, beide sind in `.gitignore`.
@@ -74,8 +72,6 @@ Alle Einstellungen stehen kommentiert in [`.env.example`](../.env.example). Pers
 | Routinen | `config/routines.json` | Entsteht per Sprache; Format in `config/routines.example.json` |
 
 > **Wichtig:** `ANTHROPIC_API_KEY` nie setzen. Claude Code würde sonst per API statt über das Abo abrechnen. Der Server entfernt die Variable vorsorglich aus der Umgebung der Kindprozesse.
-
----
 
 ## Entwicklung und Diagnose
 
