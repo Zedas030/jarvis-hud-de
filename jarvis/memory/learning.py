@@ -178,6 +178,13 @@ def spoken_report(days=7):
         m, c, _ = r["repeat"][0]
         text += f" Am teuersten wiederholt: „{m}“, {c} mal."
     try:
+        import token_budget
+        budget = token_budget.spoken()
+        if budget:
+            text += " " + budget
+    except Exception:  # noqa: BLE001 — the report must not fail on the budget
+        pass
+    try:
         import selfcheck
         n = len(selfcheck.misses(days))
         if n:

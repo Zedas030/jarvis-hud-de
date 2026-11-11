@@ -44,6 +44,10 @@ def _get(url, headers=None, timeout=10):
 def _ha_states():
     if not HA_TOKEN:
         return []
+    import ha_events
+    live = ha_events.states()       # the WebSocket copy; None while it is down, then REST as before
+    if live is not None:
+        return live
     return _get(HA_URL + "/api/states", {"Authorization": f"Bearer {HA_TOKEN}"}, timeout=15)
 
 

@@ -33,6 +33,12 @@ MIN_EXCHANGES = int(os.environ.get("JARVIS_REFLECT_MIN_EXCHANGES", "2"))
 WEEK_HOUR = int(os.environ.get("JARVIS_REFLECT_WEEK_HOUR", "19"))
 MAX_RULES = int(os.environ.get("JARVIS_MAX_RULES", "20"))
 ENABLED = os.environ.get("JARVIS_REFLECT", "1").strip() not in ("0", "false", "no", "off")
+# Lasting facts the user said are saved by the same call, without a card (the user's choice, 10.11.2026):
+# the same checks as memory_save (duplicates, contradictions, work), tagged „abgeleitet“ with the day,
+# logged in the Lernprotokoll and removable with „Vergiss …“ (memory_forget).
+REMEMBER = os.environ.get("JARVIS_REMEMBER", "1").strip() not in ("0", "false", "no", "off")
+REMEMBER_MAX = int(os.environ.get("JARVIS_REMEMBER_MAX", "3"))
+REMEMBER_NOTES = re.compile(r"^(Profil|Vorlieben|Termine|Wissen|Golf|Gesundheit|(Personen|Projekte)/[\w äöüÄÖÜß.\-]{2,40})$")
 
 LOG_NOTE = "Lernprotokoll"
 RULES_NOTE = "Vorlieben"
@@ -90,11 +96,38 @@ def _prompt(items):
             ("\n\nMögliche Korrekturen des Users:\n" + "\n".join(hints) if hints else "") +
             ("\n\nMögliche Fehlschläge (der User fragte sofort noch einmal, die erste Antwort passte wohl nicht):\n"
              + "\n".join(misses) if misses else "") +
-            "\n\nAntworte mit JSON: {\"gut\": [...], \"korrigiert\": [...], \"lehren\": [...]}\n"
+            "\n\nAntworte mit JSON: {\"gut\": [...], \"korrigiert\": [...], \"lehren\": [...]"
+            + (", \"merken\": [...]" if REMEMBER else "") + "}\n"
             "- gut: was gut lief (höchstens 3)\n"
             "- korrigiert: was der User korrigiert hat und was richtig gewesen wäre (höchstens 3)\n"
             "- lehren: allgemeine Lehre für künftige Gespräche, als Anweisung an dich (höchstens 3)\n"
+            + (MERKEN if REMEMBER else "") +
             "Jeder Eintrag ein kurzer deutscher Satz (unter 140 Zeichen). Nichts erfinden; nichts Auffälliges = leere Listen.")
+
+
+MERKEN = ("- merken: dauerhafte Fakten, die der USER selbst gesagt hat und die später nützen — über sich, Menschen "
+          "in seinem Leben, Vorlieben, Termine, Hobbys. Als Liste von {\"note\": ..., \"text\": ...}; note ist "
+          "Profil, Vorlieben, Termine, Wissen, Golf, Gesundheit, Personen/<Name> oder Projekte/<Name>; text ein kurzer "
+          "Stichpunkt in der dritten Person. NICHT: was nur Jarvis gesagt hat, Inhalte aus Mails, Webseiten oder "
+          "Kalender, Befehle, Gerätezustände, Einmaliges (\"heute müde\"), Fernsehton. Höchstens 3, sonst leer.\n")
+
+
+def remember(items):
+    """Saves the „merken“ facts through memory_save. Returns [(note, text, result)] for the log."""
+    if not REMEMBER:
+        return []
+    import jarvis_mcp
+    out = []
+    for item in (items or [])[:REMEMBER_MAX]:
+        if not isinstance(item, dict):
+            continue
+        note = " ".join(str(item.get("note") or "").split()).strip("/")
+        text = " ".join(str(item.get("text") or "").split())[:160]
+        if not text or not REMEMBER_NOTES.match(note) or privacy.is_work(note, text):
+            continue
+        res = jarvis_mcp._memory("memory_save", {"note": note, "text": text, "quelle": "abgeleitet"})
+        out.append((note, text, res))
+    return out
 
 
 def _clean(items, limit=3):
@@ -110,11 +143,13 @@ def _note(name):
     return memory.MEMORY_DIR / f"{name}.md"
 
 
-def append_log(result, when=None):
+def append_log(result, when=None, saved=()):
     """Writes one evaluation to the Lernprotokoll note. Returns the number of bullets."""
     rows = ([f"- Gut: {s}" for s in _clean(result.get("gut"))] +
             [f"- Korrigiert: {s}" for s in _clean(result.get("korrigiert"))] +
-            [f"- Lehre: {s}" for s in _clean(result.get("lehren"))])
+            [f"- Lehre: {s}" for s in _clean(result.get("lehren"))] +
+            [f"- Gemerkt ([[{note.split('/')[-1]}]]): {text}" if res.startswith("Gespeichert")
+             else f"- Nicht gemerkt ([[{note.split('/')[-1]}]]): {text} — {res[:90]}" for note, text, res in saved])
     if not rows:
         return 0
     path = _note(LOG_NOTE)
@@ -137,7 +172,9 @@ def reflect(force=False):
     if not force and time.time() - last_turn < IDLE_MIN * 60:
         return 0
     items, pos = _new_exchanges()
-    kept = [e for e in items if not privacy.is_work(e[2], e[3])]
+    import voice_wake
+    # TV and YouTube heard as "the user" (English commentary) are no conversation to learn from
+    kept = [e for e in items if not privacy.is_work(e[2], e[3]) and not voice_wake.foreign(e[2])]
     if len(kept) < (1 if force else MIN_EXCHANGES):
         if pos and not kept:          # only work talk (or nothing): mark as read anyway
             commands.update_state(lambda d: d.__setitem__("reflection_pos", pos))
@@ -146,7 +183,7 @@ def reflect(force=False):
     if result is None:
         return 0                      # no model right now: try again later, positions unchanged
     commands.update_state(lambda d: d.__setitem__("reflection_pos", pos))
-    return append_log(result)
+    return append_log(result, saved=remember(result.get("merken")))
 
 
 # ── weekly: entries → proposed rules ─────────────────────────

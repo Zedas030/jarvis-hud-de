@@ -16,12 +16,15 @@ var VoiceClient = {
 
   wanted: function () {
     var e = window.__voiceEngine;
-    return !!(e && e.enabled && e.running && !window.__remote);   // the PC first; the iPad keeps the old path
+    // iPad/iPhone too since 10.11.2026 (engine.remote in config/voice.yaml): the remote HUD tunnels
+    // /voice-ws to the engine, so the phone gets barge-in and the adaptive end of sentence as well
+    return !!(e && e.enabled && e.running && (!window.__remote || e.remote));
   },
 
   url: function () {
     var e = window.__voiceEngine || {};
     if (e.ws_url) return e.ws_url;
+    if (window.__remote) return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/voice-ws';
     return 'ws://127.0.0.1:' + (e.port || 8724);
   },
 
@@ -146,7 +149,7 @@ var VoiceClient = {
     ws.binaryType = 'arraybuffer';
     VoiceClient.ws = ws;
     ws.onopen = function () {
-      ws.send(JSON.stringify({ t: 'hello', token: TOKEN, device: 'pc', ambience: typeof Ambience !== 'undefined' ? Ambience.kind() : '' }));
+      ws.send(JSON.stringify({ t: 'hello', token: TOKEN, device: window.__remote ? 'remote' : 'pc', ambience: typeof Ambience !== 'undefined' ? Ambience.kind() : '' }));
       VoiceClient.openedAt = Date.now();
     };
     ws.onmessage = function (m) {
@@ -155,9 +158,17 @@ var VoiceClient = {
       VoiceClient.onEvent(ev);
     };
     ws.onclose = function (e) {
+      if (ws !== VoiceClient.ws) return;      // an older socket of this tab closing late changes nothing
       VoiceClient.ready = false;
       if (!VoiceClient.on) return;
       if (e.code === 4003) { VoiceClient.log('error', 'Engine lehnt das Token ab — Seite neu laden'); return; }
+      // another Jarvis window on this PC took the voice over: stay silent instead of fighting back
+      if (e.code === 4002) {
+        VoiceClient.log('note', 'ein anderes Jarvis-Fenster hat jetzt die Stimme — dieses bleibt stumm');
+        VoiceClient.stop();
+        if (typeof VoiceOwner !== 'undefined') VoiceOwner.lost();
+        return;
+      }
       VoiceClient.mirror('IDLE');
       VoiceClient.log('note', 'Engine getrennt — verbinde neu');
       VoiceClient.reconnectTimer = setTimeout(VoiceClient.connect, 1500);

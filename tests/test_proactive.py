@@ -15,6 +15,8 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from isolate import TMP  # noqa: E402  (must come before any Jarvis module)
 
+import clock                   # noqa: E402
+
 import away_check              # noqa: E402
 import background              # noqa: E402
 import commands                # noqa: E402
@@ -24,6 +26,7 @@ import morning_echo            # noqa: E402
 import proactive               # noqa: E402
 import proactive_config as pconf  # noqa: E402
 import proactive_sources as srcs  # noqa: E402
+import quiet_rules             # noqa: E402
 import router                  # noqa: E402
 import routines                # noqa: E402
 import weather_alerts          # noqa: E402
@@ -91,6 +94,9 @@ class Base(unittest.TestCase):
         w = mock.patch("whereabouts.room", return_value="Wohnzimmer")
         w.start()
         self.addCleanup(w.stop)
+        # the afternoon of today, whatever the real clock says: outside the quiet hours "22-7"
+        self.now = clock.today_at(13, 30)
+        self.addCleanup(clock.frozen(self.now, proactive, quiet_rules).stop)
 
     @classmethod
     def tearDownClass(cls):
@@ -382,9 +388,9 @@ class Voice(Base):
         reply, handler = self.local("Jarvis, Ruhe für eine Stunde")
         self.assertEqual(handler, "proactive")
         self.assertTrue(reply.startswith("Verstanden, bis "))
-        self.assertGreater(proactive._st()["quiet_until"], time.time() + 3500)
+        self.assertEqual(proactive._st()["quiet_until"], (self.now + dt.timedelta(hours=1)).timestamp())
         self.assertEqual(self.switches[-1], ("input_boolean.jarvis_ruhe", True))
-        proactive.instant(self.cfg(), house(**NOAH_ON), dt.datetime.now().astimezone().replace(hour=14))
+        proactive.instant(self.cfg(), house(**NOAH_ON), self.now.replace(hour=14, minute=0))
         self.assertEqual(self.said, [])
         self.assertEqual(self.rows()[-1]["reason"], "Ruhe")
         self.assertEqual(self.local("Ruhe aufheben")[0], "Gut, ich melde mich wieder.")

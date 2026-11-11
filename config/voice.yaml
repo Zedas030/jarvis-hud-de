@@ -13,6 +13,7 @@ engine:
   preroll_ms: 600          # kept before the first detected speech ("Jarvis" starts softly)
   debug_audio: false       # write every user segment and barge-in clip to logs/voice_debug/ as WAV
   state_log: logs/voice_state.jsonl   # every state change with timestamp and trigger
+  remote: true             # iPad/iPhone use the engine too, through the remote HUD (wss://…/voice-ws); false = old path
 
 vad:
   model: models/silero_vad.onnx   # scripts/fetch_voice_models.py; missing file = energy VAD fallback
@@ -62,6 +63,12 @@ wake:
   conversation_s: 4.0      # after an answer: this long no "Jarvis" is needed (×1.6 after a question)
   window_s: 7.0            # after a bare "Jarvis": listening this long
   barge_needs_name_with_ambience: true   # TV or music in the room: talking over him needs "Jarvis"
+  conversation_with_ambience: false      # TV, music or a video on the PC: no follow-up without "Jarvis" after an answer
+  drop_foreign: true       # utterances mostly in English (or another script) are the TV, not the user
+  echo_window_s: 60        # an utterance that repeats what he said this recently is his own echo
+  max_glue: 2              # "Sie reden weiter": at most this many pieces glued onto one request...
+  max_glue_with_ambience: 1   # ...and fewer while something plays (a TV never stops talking)
+  pc_audio: true           # sound from this PC (YouTube, a video, Spotify) counts like a TV in the room
 
 barge:
   duck_ms: 60              # speech probability above barge_threshold this long: volume down (not yet paused)

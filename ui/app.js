@@ -1686,6 +1686,63 @@ var Ringing = {
   }
 };
 
+/* ── one voice per browser ─────────────────────
+   Every HUD tab used to open the microphone, hear the wake word and read out every notice,
+   so two or three tabs (autostart plus a manual start, a window left over) answered the same
+   question in chorus. Now the tab holding the Web Lock "jarvis-voice" listens and speaks; the
+   others only show. When that tab closes, the lock passes to the next one, which takes over.
+   Clicking the mic in a silent tab takes the voice over on purpose. Browsers without Web Locks
+   keep the old behaviour (every tab speaks). */
+var VoiceOwner = {
+  me: false, ceded: false, decided: null,
+
+  speaks: function () { return VoiceOwner.me && !VoiceOwner.ceded; },
+
+  decide: function () {
+    if (VoiceOwner.decided) return VoiceOwner.decided;
+    VoiceOwner.decided = new Promise(function (resolve) {
+      if (!(navigator.locks && navigator.locks.request)) { VoiceOwner.me = true; resolve(true); return; }
+      navigator.locks.request('jarvis-voice', { ifAvailable: true }, function (lock) {
+        if (lock) { VoiceOwner.me = true; resolve(true); return new Promise(function () {}); }   // held while the tab lives
+        VoiceOwner.silent('ein anderer Jarvis-Tab hat die Stimme — dieser zeigt nur an');
+        resolve(false);
+        navigator.locks.request('jarvis-voice', function () {          // queued: ours once that tab closes
+          VoiceOwner.me = true;
+          VoiceOwner.promoted();
+          return new Promise(function () {});
+        });
+      }).catch(function () { VoiceOwner.me = true; resolve(true); });
+    });
+    return VoiceOwner.decided;
+  },
+
+  silent: function (why) {
+    document.body.classList.add('passive');
+    log('note', 'STIMME', why);
+  },
+
+  promoted: function () {
+    if (VoiceOwner.ceded) return;
+    document.body.classList.remove('passive');
+    log('note', 'STIMME', 'der andere Jarvis-Tab ist zu — dieser hört und spricht jetzt');
+    if (window.__serverSTT && localStorage.getItem('jarvis.live') !== '0' && !Live.on) Live.enable();
+  },
+
+  /* the voice engine gave our session to a newer window (another address of the same PC) */
+  lost: function () {
+    VoiceOwner.ceded = true;
+    VoiceOwner.silent('ein anderes Jarvis-Fenster hat jetzt die Stimme — dieses zeigt nur an');
+  },
+
+  /* mic clicked in a silent tab: the user wants this one */
+  take: function () {
+    if (VoiceOwner.speaks()) return;
+    VoiceOwner.me = true; VoiceOwner.ceded = false;
+    document.body.classList.remove('passive');
+    log('note', 'STIMME', 'dieser Tab hat jetzt die Stimme');
+  }
+};
+
 /* ── push from the server (/api/events) ────────
    Timers ringing, "Die Waschmaschine ist fertig", appointments, new devices,
    the wake word. Spoken only when nothing else is going on; during the quiet
@@ -1702,11 +1759,11 @@ function connectEvents() {
     var ev;
     try { ev = JSON.parse(m.data); } catch (e) { return; }
     // The wake word is heard by the PC's microphone — a phone elsewhere must not start listening.
-    if (ev.t === 'wake') return window.__remote ? undefined : Wake.heard();
+    if (ev.t === 'wake') return (window.__remote || !VoiceOwner.speaks()) ? undefined : Wake.heard();
     if (ev.t === 'timers') return Timers.set(ev.items || []);
     // Stop / Mic on the desktop card (overlay.py). Only fresh ones: a reconnect replays recent events.
     if (ev.t === 'hud') {
-      if (window.__remote || Date.now() / 1000 - (ev.at || 0) > 5) return;
+      if (window.__remote || !VoiceOwner.speaks() || Date.now() / 1000 - (ev.at || 0) > 5) return;
       if (ev.cmd === 'stop') { var sb = $('#btnStop'); if (sb && !sb.disabled) sb.click(); }
       else if (ev.cmd === 'mic') toggleLive();
       return;
@@ -1725,13 +1782,16 @@ async function drainPush() {
   if (Push.busy) return;
   Push.busy = true;
   try {
+    await VoiceOwner.decide();          // events can arrive before the boot decided who speaks
     while (Push.queue.length) {
       if (pushBlocked()) { await new Promise(function (r) { setTimeout(r, 800); }); continue; }
       var ev = Push.queue.shift();
       var b = bubble('jarvis', ev.text || '');
       b.classList.add('push');
       log(ev.t === 'alarm' ? 'run' : 'note', ev.t === 'alarm' ? 'WECKER' : 'MELDUNG', ev.text || '');
-      if (ev.t === 'alarm') {
+      if (!VoiceOwner.speaks()) {
+        b.classList.add('silent');      // the speaking tab says (or rings) it
+      } else if (ev.t === 'alarm') {
         await Ringing.start(ev.kind === 'alarm' ? 45 : 8);
         // Talked over the ringing ("Stopp", "Schlummern"): he listens instead of reading it out.
         if (ev.text && !Ringing.interrupted) await speak(ev.text);
@@ -2627,6 +2687,7 @@ var Barge = {
 async function toggleLive() {
   if (!Live.on) {
     micProblem = null;
+    VoiceOwner.take();
     localStorage.setItem('jarvis.live', '1');
     await Live.enable();
   } else if (micProblem === 'needs-click' || (Live.ctx && Live.ctx.state === 'suspended')) {
@@ -2771,6 +2832,7 @@ function isTablet() {
 
 async function bootSequence() {
   await loadStatus();
+  if (!(await VoiceOwner.decide())) return;     // another tab listens, speaks and briefs
   // A phone starts quiet: no open microphone in the pocket, no briefing the PC already
   // gave — the mic button (tap = live, hold = push-to-talk) does it. The iPad stays in
   // one place and listens for "Jarvis" on every start, after a restart too — switching

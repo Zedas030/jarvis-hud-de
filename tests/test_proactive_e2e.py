@@ -153,6 +153,9 @@ class EndToEnd(unittest.TestCase):
                   mock.patch.multiple(jarvis_mcp, HA_URL=ha.url, HA_TOKEN="test-token", _ha=real_ha),
                   mock.patch("jarvis_profile.ha", side_effect=lambda k, d=None: PROFILE.get(k, d)),
                   mock.patch.object(server, "PORT", self.port),
+                  # outside the quiet hours: at night speakers.announce plays at the night volume
+                  # (media_player.play_media) instead of tts.speak, which spoken() listens for
+                  mock.patch.object(events, "QUIET_HOURS", ""),
                   mock.patch.object(background, "ask", side_effect=self.model)):
             p.start()
             self.addCleanup(p.stop)

@@ -25,6 +25,10 @@ TMP = pathlib.Path(tempfile.mkdtemp(prefix="jarvis-test-"))
 os.environ.update(JARVIS_STATE=str(TMP / "state.json"), JARVIS_VAULT=str(TMP / "vault"),
                   JARVIS_ROUTINES=str(TMP / "routines.json"), HA_TOKEN="", JARVIS_SHOPPING_LIST="",
                   JARVIS_TODO_LIST="", JARVIS_LOCAL_ROUTER="1", JARVIS_QUIET_HOURS="22-7",
+                  JARVIS_PC_AUDIO="0",   # the PC's own sound (pc_audio.py) never makes a test strict
+                  # no sign of life, no live HA, no NAS upload from a test; the index lives in the temp folder
+                  JARVIS_HEARTBEAT="0", JARVIS_HA_WS="0", JARVIS_MEMORY_NAS="0",
+                  JARVIS_MEMORY_INDEX=str(TMP / "memory_index.sqlite"),
                   JARVIS_LEARNED=str(TMP / "learned.json"), JARVIS_PRONOUNCE=str(TMP / "aussprache.json"),
                   JARVIS_APPS=str(TMP / "apps.json"), JARVIS_PROPOSALS=str(TMP / "proposals.json"),
                   JARVIS_HEALTH_DATA=str(TMP / "health.json"), JARVIS_HOMELAB_CONFIG=str(TMP / "homelab.json"),

@@ -16,6 +16,8 @@ Kinds and what accepting does:
   switch_off  what still runs after the user left home (away_check.py) or before he leaves for an
               appointment (departure.py) -> turned off through home_control; "climate" in the payload
               sets thermostats to the away temperature
+  restart     a Docker container on the Pi whose Uptime Kuma monitor is down (kuma_alerts.py) ->
+              `docker restart <container>`, only containers listed in config/homelab.json → kuma_restart
   habit       a question the user asks at the same time of day (user_habits.py) -> a job that says
               the answer by itself or fetches it into the cache beforehand
 
@@ -33,7 +35,7 @@ import time
 ROOT = pathlib.Path(__file__).resolve().parents[2]      # the repository (this file: jarvis/<group>/)
 PATH = pathlib.Path(os.environ.get("JARVIS_PROPOSALS", ROOT / "logs" / "proposals.json"))
 DAYS = int(os.environ.get("JARVIS_PROPOSAL_DAYS", "7"))
-KINDS = ("rules", "routine", "reminder", "idea", "skill", "calendar", "switch_off", "habit")
+KINDS = ("rules", "routine", "reminder", "idea", "skill", "calendar", "switch_off", "habit", "restart")
 _LOCK = threading.Lock()
 
 
@@ -120,6 +122,9 @@ def describe(p):
         when = user_habits._when(pl.get("weekdays") or range(7), pl.get("at", "08:00"))
         return (f"{when.capitalize()}: „{pl.get('text', p['title'])}“ "
                 + ("von selbst sagen." if pl.get("mode") == "say" else "vorab holen, damit die Antwort sofort kommt."))
+    if p["kind"] == "restart":
+        return (f"Auf dem Pi den Container {pl.get('container', '?')} neu starten (docker restart). "
+                f"Grund: Uptime Kuma meldet {pl.get('monitor', '?')} als ausgefallen.")
     if p["kind"] == "skill":
         import learning
         import skill_factory
@@ -181,6 +186,9 @@ def accept(pid, internal=None):
     elif p["kind"] == "habit":
         import user_habits
         result = user_habits.add_job(pl)
+    elif p["kind"] == "restart":
+        import kuma_alerts
+        result = kuma_alerts.restart(pl.get("container"))
     else:
         result = "Vorgemerkt."
     resolve(pid, "accepted")

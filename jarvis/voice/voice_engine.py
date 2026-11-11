@@ -35,6 +35,7 @@ import time
 import urllib.error
 import urllib.request
 
+import pc_audio
 import voice_config
 import voice_dsp
 import voice_endpoint
@@ -152,8 +153,11 @@ class Session:
             self.partials = voice_stt.PartialRunner(self.sh.rec, self.cfg.endpoint.partial_every_ms, self._on_partial)
         # conversation
         self.awake_until = 0.0
-        self.last_sent = None                   # {"text", "at"}: for the continue window
+        self.name_until = 0.0                   # the part of the window opened by "Jarvis" itself
+        self.last_sent = None                   # {"text", "at", "glues"}: for the continue window
         self.glue = None
+        self.glue_n = 0                         # pieces already glued onto the request in self.glue
+        self.own_audio = False                  # this PC session is speaking (pc_audio.own)
         self.pending_confirm = None
         self.run = None                         # the active LLM run (dict)
         self.turn = None                        # voice_metrics.Turn
@@ -194,6 +198,10 @@ class Session:
             log.warning("send failed: %s", str(e)[:80])
 
     def _on_state(self, old, new, why, at):
+        speaking = new in (st.SPEAKING, st.INTERRUPTED, st.RESUMING)
+        if self.device == "pc" and speaking != self.own_audio:
+            self.own_audio = speaking           # his voice from the browser is not a video playing
+            pc_audio.own(speaking)
         self._emit("state", state=new, prev=old, why=why, at=at)
 
     def log(self, text):
@@ -208,9 +216,24 @@ class Session:
         with self.lock:
             self.player_cond.notify_all()
         self.machine.force(st.IDLE, "session closed")
+        if self.own_audio:
+            self.own_audio = False
+            pc_audio.own(False)
 
-    def awake(self):
-        return self.ptt or bool(self.pending_confirm) or self.clock() < self.awake_until
+    def awake(self, strict=False):
+        """strict: TV, music or a video plays — then only a window opened by "Jarvis" counts,
+        not the follow-up after an answer (the TV kept every answer going with the next line)."""
+        if self.ptt or self.pending_confirm:
+            return True
+        conversation = not strict or self.cfg.wake.conversation_with_ambience
+        return self.clock() < (self.awake_until if conversation else self.name_until)
+
+    def ambient(self):
+        """Something in the room talks that is not the user: TV, music (Home Assistant via the HUD)
+        or sound from this PC itself (a YouTube video, pc_audio.py)."""
+        if self.ambience in ("music", "tv", "sport"):
+            return True
+        return self.device == "pc" and bool(self.cfg.wake.pc_audio) and pc_audio.playing()
 
     def wake_mode(self):
         try:
@@ -219,8 +242,10 @@ class Session:
         except Exception:  # noqa: BLE001
             return "off"
 
-    def open_window(self, seconds):
+    def open_window(self, seconds, by_name=False):
         self.awake_until = max(self.awake_until, self.clock() + seconds)
+        if by_name:
+            self.name_until = max(self.name_until, self.clock() + seconds)
         self._emit("window", until=self.awake_until)
 
     # ── frames from the microphone ──────────────────────────────
@@ -368,8 +393,18 @@ class Session:
                 self._voice_confirm(text)
                 self._back_to_listening("Freigabe per Stimme")
                 return
-            awake = ptt or self.awake() or bool(self.glue)
-            strict = self.ambience in ("music", "tv", "sport") and self.wake_mode() != "off"
+            strict = self.wake_mode() != "off" and self.ambient()
+            why = "" if ptt else self._not_for_me(text)
+            if why:
+                self.log(f"{why}: „{text[:60]}“")
+                if self.glue:                   # the TV went on, not the user: his request alone
+                    text, self.glue = self.glue, None
+                    self.last_sent = {"text": text, "at": self.clock(), "glues": self.glue_n}
+                    self._start_run(text, turn, typed=False)
+                else:
+                    self._back_to_listening(why)
+                return
+            awake = ptt or self.awake(strict) or bool(self.glue)
             ok, rest = voice_wake.check(text, awake, strict)
             if self.wake_mode() == "off":
                 text = rest if ok and rest else text          # "Jarvis, ..." is stripped even without a wake word
@@ -379,20 +414,32 @@ class Session:
                     self._back_to_listening("ohne „Jarvis“")
                     return
                 if voice_wake.is_bare(text):
-                    self.open_window(self.cfg.wake.window_s)
+                    self.open_window(self.cfg.wake.window_s, by_name=True)
                     self._emit("chime")
                     self.log("ich höre")
                     self._back_to_listening("nur „Jarvis“")
                     return
                 text = rest or text
+            glues = 0
             if self.glue:
                 text = (self.glue + " " + text).strip()
                 self.glue = None
+                glues = self.glue_n + 1
                 self.endpoint.learn(user_continued=True)
             else:
                 self.endpoint.learn(user_continued=False)
-            self.last_sent = {"text": text, "at": self.clock()}
+            self.last_sent = {"text": text, "at": self.clock(), "glues": glues}
             self._start_run(text, turn, typed=False)
+
+    def _not_for_me(self, text):
+        """Why an utterance is not the user's, or "": English commentary or a foreign script
+        (the TV — he is spoken to in German), or his own last answer heard back from the room."""
+        if self.wake_mode() != "off" and self.cfg.wake.drop_foreign and voice_wake.foreign(text):
+            return "fremde Sprache"
+        if not voice_wake.START.match(text) and _words(text) >= 5 and                 self.guard.text_match(text, within_s=self.cfg.wake.echo_window_s) >=                 max(0.75, self.cfg.barge.echo_text_ratio):
+            voice_metrics.event("echo_false_alarms")
+            return "eigenes Echo"
+        return ""
 
     def _other_mic(self, ended):
         """The preferred device's name when it heard this utterance too (or still may), else "".
@@ -672,7 +719,10 @@ class Session:
             return
         ev = self.tracker.feed(p)
         if ev == "start":
-            self.glue = ls["text"]
+            limit = self.cfg.wake.max_glue_with_ambience if self.ambient() else self.cfg.wake.max_glue
+            if ls.get("glues", 0) >= limit:
+                return                          # a TV never stops talking: no endless request
+            self.glue, self.glue_n = ls["text"], ls.get("glues", 0)
             self._cancel_run("Sie reden weiter")
             self.log("Sie reden weiter — warte auf den Rest")
             voice_metrics.event("user_continued")
@@ -849,7 +899,7 @@ class Session:
             elif t == "mute":
                 self.muted = bool(ev.get("on"))
             elif t == "wake_heard":
-                self.open_window(self.cfg.wake.window_s)
+                self.open_window(self.cfg.wake.window_s, by_name=True)
                 if self.machine.state in (st.SPEAKING, st.INTERRUPTED, st.RESUMING):
                     self._stop_speaking("Aktivierungswort")
                     self._finish_turn(interrupted=True, why="Aktivierungswort")
@@ -965,7 +1015,7 @@ class Session:
             named = voice_wake.names(text)
             self._emit("barge_text", text=text)
             rest = voice_wake.check(text, True)[1] if named else text
-            strict = self.ambience in ("music", "tv", "sport") and self.cfg.wake.barge_needs_name_with_ambience
+            strict = self.cfg.wake.barge_needs_name_with_ambience and self.ambient()
             import alexa_voice
             if self.output and alexa_voice.is_alexa(self.output):
                 strict = True
@@ -992,7 +1042,7 @@ class Session:
                 if named:                        # a bare "Jarvis": stop and listen
                     self._stop_speaking("„Jarvis“")
                     self._finish_turn(interrupted=True, why="„Jarvis“")
-                    self.open_window(self.cfg.wake.window_s)
+                    self.open_window(self.cfg.wake.window_s, by_name=True)
                     self._emit("chime")
                     voice_metrics.event("barge_ins", outcome="name")
                 else:

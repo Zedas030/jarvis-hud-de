@@ -367,6 +367,12 @@ def _usage():
                top=[dict(msg=m, count=c, tokens=t) for m, c, t in week.get("repeat") or []][:5],
                aliases=week.get("aliases", 0), drafts=week.get("drafts", 0))
     try:
+        import token_budget
+        b = token_budget.week()
+        out.update(budget=b["budget"], budget_used=b["tokens"], budget_pct=b["pct"])
+    except Exception:  # noqa: BLE001 — the tile works without a budget
+        pass
+    try:
         import selfcheck
         out["misses"] = len(selfcheck.misses(7))
     except Exception:  # noqa: BLE001

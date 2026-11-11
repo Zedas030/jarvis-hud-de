@@ -30,6 +30,7 @@ import pathlib
 import re
 import statistics
 import subprocess
+import threading
 import time
 import urllib.request
 
@@ -296,11 +297,19 @@ def process(findings, now=None, quiet=None):
     return commands.update_state(mut)
 
 
+_CHECK_LOCK = threading.Lock()
+
+
 def check(cfg=None):
+    with _CHECK_LOCK:           # the 5-min round and a Kuma alarm (kuma_alerts.py) must not count twice
+        return _check(cfg)
+
+
+def _check(cfg=None):
     cfg = cfg or config()
     metrics, findings = {}, []
     for fn in (check_ha, lambda: check_pi(metrics), lambda: check_nas(metrics), lambda: check_devices(cfg),
-               lambda: check_pc(metrics), check_backup, lambda: check_situation(cfg)):
+               lambda: check_pc(metrics), check_backup, check_memory_backup, lambda: check_situation(cfg)):
         try:
             findings += fn()
         except Exception as e:  # noqa: BLE001 — one dead source must not silence the rest
@@ -350,6 +359,13 @@ def check_backup():
             up="Die Backups auf dem NAS laufen wieder sauber."))
     f = _BACKUP["finding"]
     return [f, f] if f and not f["ok"] else ([f] if f else [])
+
+
+def check_memory_backup():
+    """The memory's pool on the NAS (memory_nas.py): too old or failed its weekly check."""
+    import memory_nas
+    f = memory_nas.finding()
+    return [] if f is None else ([f, f] if not f["ok"] else [f])   # like check_backup: no second round needed
 
 
 def _norm_key(text):

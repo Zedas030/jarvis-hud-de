@@ -18,6 +18,7 @@ import array
 import io
 import math
 import struct
+import time
 
 
 def _ints(pcm):
@@ -280,14 +281,16 @@ class EchoGuard:
         except Exception:  # noqa: BLE001
             return frame
 
-    def remember(self, sentence):
-        self.said.append(sentence.lower())
+    def remember(self, sentence, now=None):
+        self.said.append((time.time() if now is None else now, sentence.lower()))
         del self.said[:-12]
 
-    def text_match(self, text):
+    def text_match(self, text, within_s=None, now=None):
+        """within_s: only sentences queued that recently (a long answer's echo arrives after it ends)."""
         import re
         words = re.findall(r"\w{3,}", (text or "").lower())
-        if not words or not self.said:
+        now = time.time() if now is None else now
+        said = " ".join(t for at, t in self.said if within_s is None or now - at <= within_s)
+        if not words or not said:
             return 0.0
-        said = " ".join(self.said)
         return sum(1 for w in words if w in said) / len(words)

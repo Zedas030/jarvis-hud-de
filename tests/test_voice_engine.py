@@ -325,5 +325,84 @@ class Conversation(unittest.TestCase):
         self.assertEqual([p for p in s.posts if p[0] == "/api/run"], [])
 
 
+    # ── TV, videos and his own echo (2026-11-09) ──────────────
+    def text_mode(self):
+        import wakeword
+        wakeword.MODE = "text"                      # tearDown puts the old mode back
+
+    def runs(self, s):
+        return [p[1]["message"] for p in s.posts if p[0] == "/api/run"]
+
+    def test_english_commentary_is_the_tv(self):
+        """'Jarvis Kelsey, the intended time ...' was Travis Kelce on the NFL broadcast."""
+        self.text_mode()
+        s, c = self.speak_and_wait(["Jarvis Kelsey, the intended time for the third down of an hour."])
+        self.assertTrue(c.wait_state(st.LISTENING, 2))
+        self.assertEqual(self.runs(s), [])
+
+    def test_his_own_answer_heard_back_is_dropped(self):
+        self.text_mode()
+        self.session, self.client, _ = make_session(finals=["Wohnzimmer links steht auf 20 Grad Celsius. Erledigt."])
+        s, c = self.session, self.client
+        s.awake_until = time.time() + 30                # right after his answer: the follow-up window is open
+        s.guard.remember("erledigt: wohnzimmer links steht auf 20 °c. erledigt: wohnzimmer rechts steht auf 20 °c.")
+        s.guard.remember("wohnzimmer links steht auf 20 grad celsius. erledigt.")
+        feed_ms(s, tone(400))
+        feed_ms(s, silence(600))
+        self.assertTrue(self.passed(c, st.THINKING))
+        self.assertTrue(c.wait_state(st.LISTENING, 2))
+        self.assertEqual(self.runs(s), [])
+
+    def test_follow_up_needs_the_name_while_the_tv_plays(self):
+        self.text_mode()
+        self.session, self.client, _ = make_session(finals=["Das war ein starker Spielzug heute Abend"])
+        s, c = self.session, self.client
+        s.ambience = "tv"
+        s.open_window(30)                               # after an answer
+        feed_ms(s, tone(400))
+        feed_ms(s, silence(600))
+        self.assertTrue(self.passed(c, st.THINKING))
+        self.assertTrue(c.wait_state(st.LISTENING, 2))
+        self.assertEqual(self.runs(s), [])
+        s.ambience = ""                                 # without the TV the same window counts
+        self.assertTrue(s.awake(strict=False))
+        s.open_window(30, by_name=True)                 # a bare "Jarvis" opens it even with the TV on
+        self.assertTrue(s.awake(strict=True))
+
+    def test_video_on_this_pc_counts_like_a_tv(self):
+        import pc_audio
+        self.session, _c, _ = make_session()
+        s = self.session
+        s.device = "pc"
+        old = pc_audio.ON
+        pc_audio.ON, pc_audio._STATE["started"] = True, True   # no real sampler in a test
+        try:
+            pc_audio.reset()
+            self.assertFalse(s.ambient())
+            now = time.time()
+            for i in range(4):
+                pc_audio.add_sample(True, now - 4 + i)
+            self.assertTrue(s.ambient())
+            pc_audio.reset()
+            pc_audio.own(True)                          # his own voice from the browser is no video
+            for i in range(4):
+                pc_audio.add_sample(True, now - 4 + i)
+            self.assertFalse(s.ambient())
+        finally:
+            pc_audio.reset()
+            pc_audio.ON = old
+
+
+class ForeignWords(unittest.TestCase):
+    def test_foreign(self):
+        f = voice_wake.foreign
+        self.assertTrue(f("Kansas City Chiefs, first down. Change of speed, those are the qualities of great routes."))
+        self.assertTrue(f("Jarvis, I will go right now to $27 and set up. The Bills are coming."))
+        self.assertTrue(f("Randaleically un Barack wasn" + chr(0x771f) + " oli " + chr(0x412) * 4))
+        self.assertFalse(f("Jarvis, spiel Let it be von den Beatles"))
+        self.assertFalse(f("Jarvis, mach das Licht im Wohnzimmer an"))
+        self.assertFalse(f("So, like, when it is over. Jarvis, gute Nacht, starte die Nachtroutine."))
+        self.assertFalse(f("Wohnzimmer, 20 Grad, Jarvis."))
+
 if __name__ == "__main__":
     unittest.main()

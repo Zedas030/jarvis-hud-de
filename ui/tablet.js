@@ -340,8 +340,10 @@
     var u = d.usage || {};
     if (u.total) {
       var trend = u.trend_pct == null ? '' : ' · ' + (u.trend_pct > 0 ? '+' : '') + u.trend_pct + ' %';
-      out.push(tile(u.trend_pct != null && u.trend_pct > 25 ? 'warn' : '', 'Tokens', num(Math.round(u.tokens / 1000)), 'k',
-        (u.local_pct != null ? u.local_pct + ' % lokal' : '') + trend, u.local_pct, 'usage'));
+      var budget = u.budget_pct == null ? '' : ' · Budget ' + u.budget_pct + ' %';
+      out.push(tile((u.budget_pct != null && u.budget_pct >= 80) || (u.trend_pct != null && u.trend_pct > 25) ? 'warn' : '',
+        'Tokens', num(Math.round(u.tokens / 1000)), 'k',
+        (u.local_pct != null ? u.local_pct + ' % lokal' : '') + trend + budget, u.local_pct, 'usage'));
     }
     q('#tTiles').innerHTML = out.join('');
   }
@@ -448,6 +450,8 @@
       var rows = [row('Anfragen (7 Tage)', num(u.total)), row('Lokal erledigt', u.local_pct != null ? u.local_pct + ' %' : '—', u.local_pct >= 60 ? 'good' : ''),
                   row('Ans Modell', num(u.llm)), row('Tokens diese Woche', Number(u.tokens || 0).toLocaleString('de-DE')),
                   row('Vorwoche', Number(u.prev_tokens || 0).toLocaleString('de-DE')),
+                  row('Wochenbudget seit Montag', u.budget_pct == null ? 'aus' : Number(u.budget_used || 0).toLocaleString('de-DE') + ' von '
+                      + Number(u.budget || 0).toLocaleString('de-DE') + ' (' + u.budget_pct + ' %)', u.budget_pct >= 100 ? 'bad' : u.budget_pct >= 80 ? 'warn' : ''),
                   row('Trend', u.trend_pct == null ? '—' : (u.trend_pct > 0 ? '+' : '') + u.trend_pct + ' %', u.trend_pct > 25 ? 'warn' : u.trend_pct < 0 ? 'good' : ''),
                   row('Gelernte Formulierungen', num(u.aliases) + (u.drafts ? ' (+' + u.drafts + ' Entwürfe)' : ''))];
       if (u.misses != null) rows.push(row('Gleich nochmal gefragt', num(u.misses), u.misses > 3 ? 'warn' : ''));

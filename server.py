@@ -49,8 +49,29 @@ if _env.exists():
 # A crash is restarted too, with a growing pause; five crashes within ten
 # minutes mean something is broken for good (port taken, bad .env) — then it stops.
 RESTART_CODE = 3
+
+
+def _port_answers(port, host="127.0.0.1"):
+    """True when something already accepts connections on host:port."""
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
 if __name__ == "__main__" and os.environ.get("JARVIS_CHILD") != "1":
     import subprocess
+    # One Jarvis per PC. A second start (autostart plus a double-click, an old window left open)
+    # used to run every watcher, the wake word and the voice engine a second time — and he said
+    # everything twice. If one already answers, only open its page and leave.
+    _port = int(os.environ.get("JARVIS_PORT", "8720"))
+    if _port_answers(_port):
+        print(f"\n  Jarvis läuft schon auf http://127.0.0.1:{_port} — ich starte keinen zweiten.\n", flush=True)
+        if os.environ.get("JARVIS_OPEN", "1") != "0":
+            webbrowser.open(f"http://127.0.0.1:{_port}")
+        sys.exit(0)
     # The child reads .env itself on every start. Handing it the values read here
     # would pin them for good: a changed key (another voice, a new password) only
     # took effect after closing the whole Jarvis window.
@@ -116,6 +137,13 @@ import proactive  # noqa: E402
 import reflection  # noqa: E402
 import suggestions  # noqa: E402
 import weekly_review  # noqa: E402
+import heartbeat  # noqa: E402
+import ha_events  # noqa: E402
+import memory_index  # noqa: E402
+import memory_nas  # noqa: E402
+import memory_weekly  # noqa: E402
+import birthdays  # noqa: E402
+import night_report  # noqa: E402
 import memory      # noqa: E402
 import router      # noqa: E402
 import runtime     # noqa: E402
@@ -309,7 +337,8 @@ def _voice_engine_status():
     cfg = voice_config.load()
     s = voice_ws.status()
     return {"enabled": bool(cfg.engine.get("enabled", True)), "running": s["running"], "port": s["port"] or cfg.engine.port,
-            "error": s["error"], "sessions": s["sessions"], "conversation_s": cfg.wake.conversation_s}
+            "error": s["error"], "sessions": s["sessions"], "conversation_s": cfg.wake.conversation_s,
+            "remote": bool(cfg.engine.get("remote", True))}
 
 
 def notifications():
@@ -370,6 +399,12 @@ def _describe_call(tool, data):
 
 
 class Server(ThreadingHTTPServer):
+    # On Windows SO_REUSEADDR lets a second socket bind a port that is already listening, so a
+    # second Jarvis started silently next to the first instead of failing. Without it the second
+    # bind fails as it should; the restart after a code change is unaffected (Windows does not
+    # hold a closed listener's port the way Linux does).
+    allow_reuse_address = os.name != "nt"
+
     def handle_error(self, request, client_address):
         # the browser gave up on a request (Jarvis interrupted, a new question, tab reloaded):
         # nothing went wrong here, so no traceback in the console
@@ -489,14 +524,55 @@ class Handler(BaseHTTPRequestHandler):
         supplied = self.headers.get("X-Jarvis-Token", "")
         return bool(supplied) and secrets.compare_digest(supplied, API_TOKEN)
 
+    def _voice_tunnel(self):
+        """iPad/iPhone → voice engine. tailscale serve only forwards the remote port, and the engine listens on
+        127.0.0.1 alone; so a paired device's WebSocket upgrade on /voice-ws is passed through byte for byte.
+        The engine still checks the page token in its hello and reads the device from the cookie."""
+        import selectors
+        import socket
+        if self.headers.get("Upgrade", "").lower() != "websocket":
+            return self._json({"error": "websocket only"}, 400)
+        if not self._origin_ok():
+            return self._json({"error": "origin rejected"}, 403)
+        cfg = voice_config.load()
+        s = voice_ws.status()
+        if not (s["running"] and cfg.engine.get("remote", True)):
+            return self._json({"error": "voice engine off"}, 503)
+        try:
+            up = socket.create_connection(("127.0.0.1", int(s["port"] or cfg.engine.port)), timeout=5)
+        except OSError:
+            return self._json({"error": "voice engine unreachable"}, 502)
+        head = [f"GET / HTTP/1.1"] + [f"{k}: {v}" for k, v in self.headers.items()]
+        self.close_connection = True
+        client = self.connection
+        try:
+            up.settimeout(None)
+            client.settimeout(None)
+            up.sendall(("\r\n".join(head) + "\r\n\r\n").encode("latin-1"))
+            sel = selectors.DefaultSelector()
+            sel.register(client, selectors.EVENT_READ, up)
+            sel.register(up, selectors.EVENT_READ, client)
+            while True:
+                for key, _ in sel.select(timeout=300):
+                    data = key.fileobj.recv(65536)
+                    if not data:
+                        return None
+                    key.data.sendall(data)
+        except OSError:
+            return None
+        finally:
+            up.close()
+
     def do_GET(self):
         if not self._host_ok():
             return self._json({"error": "invalid host"}, 403)
         p = urlparse(self.path).path
         if self.remote and p not in REMOTE_PUBLIC and not self._device_ok():
-            if p.startswith("/api/"):
+            if p.startswith("/api/") or p == "/voice-ws":
                 return self._json({"error": "device not paired"}, 401)
             return self._redirect("/pair.html")
+        if p == "/voice-ws" and self.remote:
+            return self._voice_tunnel()
 
         if p == "/api/layout":
             return self._json({"layout": _saved_dashboard_layout(self._layout_device())})
@@ -521,6 +597,7 @@ class Handler(BaseHTTPRequestHandler):
                 persona=personality.label(),
                 sonos=sonos.status(self._layout_device()),
                 voice_engine=_voice_engine_status(),
+                ha_live=ha_events.status(), heartbeat=heartbeat.status(),
                 session=SESSION["id"], boot=BOOT_ID, remote=self.remote, remote_enabled=REMOTE))
 
         if p == "/api/events":
@@ -1247,6 +1324,29 @@ def _watch_code():
             os._exit(RESTART_CODE)
 
 
+def _open_hud_once():
+    """Open the HUD in the browser — unless a tab of it is already there. After a reboot the browser
+    restores the old Jarvis tab, and every start used to add another one (five were open). A
+    restored tab reports itself within a few seconds (ui/pip.js → /api/hud), so wait that long.
+    Tabs that slip through anyway close themselves (ui/tabguard.js)."""
+    wait = float(os.environ.get("JARVIS_OPEN_WAIT_S", "12"))
+    end = time.time() + wait
+    while True:
+        if overlay.open_tabs():
+            print("  Jarvis-Tab ist schon offen — ich öffne keinen neuen.", flush=True)
+            return
+        if time.time() >= end:
+            break
+        time.sleep(0.5)
+    url = f"http://127.0.0.1:{PORT}"
+    browser = os.path.expandvars(os.environ.get("JARVIS_BROWSER", "").strip())
+    if browser and os.path.exists(browser):   # e.g. a browser that should autoplay the voice
+        import subprocess
+        subprocess.Popen([browser, "--autoplay-policy=no-user-gesture-required", url])
+    else:
+        webbrowser.open(url)
+
+
 def main():
     for stream in (sys.stdout, sys.stderr):
         try:   # Windows consoles default to cp1252 and choke on the banner's box characters
@@ -1287,7 +1387,18 @@ def main():
   remote       {f'127.0.0.1:{REMOTE_PORT} for tailscale serve · {len(devices.listing())} devices'
                 if REMOTE else 'off (JARVIS_REMOTE=1)'}
 """, flush=True)
-    srv = Server(("127.0.0.1", PORT), Handler)
+    srv = None
+    for attempt in range(20):      # right after a restart the old child may still be letting go
+        try:
+            srv = Server(("127.0.0.1", PORT), Handler)
+            break
+        except OSError:
+            if attempt == 19:
+                if _port_answers(PORT):
+                    print(f"\n  Auf Port {PORT} läuft schon ein Jarvis — dieser hier hört auf.\n", flush=True)
+                    sys.exit(0)
+                raise
+            time.sleep(0.5)
     if REMOTE:
         remote_srv = Server(("127.0.0.1", REMOTE_PORT), RemoteHandler)
         threading.Thread(target=remote_srv.serve_forever, daemon=True).start()
@@ -1300,8 +1411,15 @@ def main():
         tts_chain.start()          # provider balances in the background
     briefing.start_watchdog()
     scheduler.start()              # timers, alarms, reminders, planned commands
+    ha_events.start()              # HA state over one WebSocket; watchers wake on changes
     watchers.start()               # proactive notices (appliances, appointments, storage, NAS)
-    reflection.start()             # learning loop: Lernprotokoll, weekly rules proposal
+    heartbeat.start(PORT)          # sign of life for the HA watchdog (a dead Jarvis gets noticed)
+    reflection.start()             # learning loop: Lernprotokoll, weekly rules proposal; lasting facts it saves itself
+    memory_index.start()           # full-text index over notes and every exchange (FTS5)
+    memory_nas.start()             # once a day: vault zip and index to the NAS
+    memory_weekly.start()          # Sunday: what Jarvis saved by himself this week, „passt“ / „streich …“
+    birthdays.start()              # the day before a birthday from the memory, with what the person likes
+    night_report.start()           # morning: the night's ghost pulses and lights, only when there were any
     weekly_review.start()          # Garmin once a day, weekly review on Sunday
     homelab_watch.start()          # outages and unusual values in the homelab
     energy_coach.start()           # learns the plugs, says when solar power is left over
@@ -1335,13 +1453,7 @@ def main():
     if os.environ.get("JARVIS_CHILD") == "1":    # only a supervised child can be restarted
         threading.Thread(target=_watch_code, daemon=True).start()
     if os.environ.get("JARVIS_OPEN", "1") != "0":
-        url = f"http://127.0.0.1:{PORT}"
-        browser = os.path.expandvars(os.environ.get("JARVIS_BROWSER", "").strip())
-        if browser and os.path.exists(browser):   # e.g. a browser that should autoplay the voice
-            import subprocess
-            subprocess.Popen([browser, "--autoplay-policy=no-user-gesture-required", url])
-        else:
-            webbrowser.open(url)
+        threading.Thread(target=_open_hud_once, daemon=True, name="open-hud").start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

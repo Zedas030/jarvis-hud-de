@@ -30,6 +30,7 @@ import jarvis_log
 log = jarvis_log.get(__name__)
 
 STATE = {"running": False, "error": "", "sessions": 0, "bind": "", "port": 0, "thread": None}
+SOCKETS = {}                # id(ws) -> ws, so a newer session of the same device can close an older one
 
 
 def status():
@@ -86,9 +87,19 @@ def _serve(shared):
             session = voice_engine.Session(shared, send, send_audio, device=device)
             if hello.get("ambience"):
                 session.client_event({"t": "ambience", "kind": hello["ambience"]})
+            # One live session per device. Every extra HUD tab on the PC used to open its own
+            # session on the same microphone, and each of them answered the same question.
+            # The newest connection wins; the older ones are told why (4002) and stay quiet.
             with shared.lock:
+                older = [k for k, s in shared.sessions.items() if getattr(s, "device", None) == device]
                 shared.sessions[id(ws)] = session
                 STATE["sessions"] = len(shared.sessions)
+                SOCKETS[id(ws)] = ws
+            for key in older:
+                old_ws = SOCKETS.get(key)
+                log.info("Sprach-Session von %s durch neuere Verbindung ersetzt", device)
+                if old_ws is not None and old_ws.close_code is None:
+                    await old_ws.close(4002, "replaced")
             async for msg in ws:
                 if isinstance(msg, bytes):
                     session.feed(msg)
@@ -118,6 +129,7 @@ def _serve(shared):
                 session.close()
                 with shared.lock:
                     shared.sessions.pop(id(ws), None)
+                    SOCKETS.pop(id(ws), None)
                     STATE["sessions"] = len(shared.sessions)
             if not token_ok and ws.close_code is None:
                 await ws.close()

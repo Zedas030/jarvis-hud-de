@@ -89,6 +89,9 @@ Alle Einstellungen stehen kommentiert in [`.env.example`](../.env.example). Pers
 # Autostart bei der Anmeldung (Aufgabenplanung, ohne Adminrechte); -Remove entfernt ihn
 powershell -ExecutionPolicy Bypass -File scripts\install-autostart.ps1
 
+# Absturz-Wächter in Home Assistant anlegen (Helfer + Automation; erneut ausführen aktualisiert die Automation)
+.venv\Scripts\python.exe scripts\heartbeat_ha_setup.py
+
 # Router + schlanken Aufruf ohne Server testen
 .venv\Scripts\python.exe scripts\lean_probe.py "Wie geht es dem NAS?"
 

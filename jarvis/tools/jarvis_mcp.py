@@ -238,7 +238,8 @@ TOOLS += [
     },
     {
         "name": "memory_search",
-        "description": "Search the user's notes and past conversations (titles and snippets).",
+        "description": ("Search the user's notes and all past conversations, also months old (full-text index, "
+                        "titles and snippets, conversations with their day)."),
         "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
     },
     {
@@ -940,6 +941,14 @@ def _memory(name, args):
     import re as _re
     import memory
     if name == "memory_search":
+        # The FTS5 index first: it also holds conversations older than the diary keeps (memory_index.py).
+        try:
+            import memory_index
+            found = memory_index.describe(args.get("query") or "")
+            if found:
+                return found
+        except Exception:  # noqa: BLE001 — a broken index must not cost the memory: plain scan below
+            pass
         # Full-text, word-wise: return the matching lines, not whole notes.
         words = [w for w in _re.split(r"[\W_]+", (args.get("query") or "").lower()) if len(w) > 2]
         if not words:

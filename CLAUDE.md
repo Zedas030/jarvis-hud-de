@@ -40,7 +40,10 @@ port and state file (see `docs/installation.md`, "Entwicklung und Diagnose"); `J
   the user accepts on a card. One exception, chosen by the user: `mail_events.py` enters bookings
   from senders in `JARVIS_MAIL_EVENTS_TRUSTED`, and `shipments.py` enters expected deliveries as
   all-day entries, straight into the calendar (fixed code, no model, no links, announced, undoable
-  via `mail_events_undo`). Do not widen it without asking.
+  via `mail_events_undo`). A second one, chosen by the user on 10.11.2026: the learning loop
+  (`reflection.remember`) saves up to `JARVIS_REMEMBER_MAX` lasting facts the user said himself through
+  `memory_save` (duplicate/contradiction/work checks, only the notes in `REMEMBER_NOTES`, never Befehle,
+  logged in the Lernprotokoll, removable with memory_forget). Do not widen either without asking.
 - Jarvis never edits his own code at runtime.
 - Never set `ANTHROPIC_API_KEY`; personal data lives only in `.env`, `config/*.json` (not the
   examples), `vault/`, `logs/`, `backups/`, `state.json` — all ignored by git.

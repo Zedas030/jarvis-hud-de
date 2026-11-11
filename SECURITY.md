@@ -34,6 +34,22 @@ Same-day services and work mails stay out. With `TRACK17_API_KEY`, 17TRACK (a th
 each tracking number to follow it across carriers — nothing else (no address, no shop, no mail
 content); with only `DHL_API_KEY`, DHL itself is asked about DHL numbers.
 
+Facts from conversations (`reflection.remember`, since 10.11.2026, the user's choice): after a
+conversation the learning loop may save up to three lasting facts the user said himself, without a
+card, through the same `memory_save` path (duplicate and contradiction checks, `privacy.is_work`).
+Only Profil, Vorlieben, Termine, Wissen, Golf, Gesundheit, Personen/… and Projekte/… — never Befehle,
+Websites or Smart Home, because those steer behaviour. English lines (TV heard as the user) are
+dropped before the model sees them; the prompt asks only for what the user said, not for mail, web or
+calendar content. Each save is listed in the Lernprotokoll and removable with memory_forget; worst
+case of an injected line is a wrong bullet tagged „abgeleitet“. `JARVIS_REMEMBER=0` turns it off.
+
+Container restarts after an Uptime Kuma alarm (`kuma_alerts.py`, since 10.11.2026): the alarm only creates a
+proposal of kind `restart`; nothing runs before proposal_accept and its card. The container name comes from
+config/homelab.json → `kuma_restart` (never from the alarm text), is checked against `^[a-z0-9][a-z0-9_.-]+$`
+and against that list again when the card is accepted, and the only command is `docker restart <name>` over the
+pi_run SSH path. The weekly memory review strikes only bullets Jarvis saved by himself that week, without a card,
+as the undo of his own background save.
+
 Several mailboxes (`mailboxes.py`, `MAIL2_…`): all read-only except drafts (APPEND) and
 "mark as read"; one failing account never blocks the others. Every module that reads mail over a
 period (inbox, bookings, deliveries, parcels) goes through `mailboxes.recent` and never looks back

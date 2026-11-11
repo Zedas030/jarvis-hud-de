@@ -26,6 +26,13 @@ Satzende, Unterbrechen, Weitersprechen, Modellaufruf) entscheidet der Server. Di
 bekommt später ein Raum-Satellit auf dem Linux-Server. Die Analyse, die zu dem Umbau führte, steht in
 [`VOICE-ANALYSE.md`](../VOICE-ANALYSE.md).
 
+**iPad und iPhone (seit 10.11.2026):** Gekoppelte Geräte nutzen die Engine auch. Die Engine hört nur auf
+127.0.0.1, und `tailscale serve` leitet nur den Remote-Port weiter; deshalb reicht der Remote-HUD einen
+WebSocket auf `wss://<pc>.ts.net/voice-ws` Byte für Byte an die Engine durch (`server._voice_tunnel`), nur für
+gekoppelte Geräte mit passendem Origin. Die Engine prüft danach wie am PC das Seiten-Token und erkennt das Gerät
+am Cookie. An der Tailscale-Konfiguration ändert sich nichts. Zurück zum alten Weg: `engine.remote: false` in
+`config/voice.yaml`.
+
 ### Zustandsmaschine
 
 ```

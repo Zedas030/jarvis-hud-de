@@ -28,8 +28,11 @@ import events
 import jarvis_profile as profile
 import morning_echo
 import proactive
+import airing
+import token_budget
 
 EVERY = int(os.environ.get("JARVIS_WATCH_SECONDS", "30"))
+WAKE_GAP = float(os.environ.get("JARVIS_WATCH_WAKE_GAP_S", "2"))   # pause after a live HA change
 EVENT_LEAD_MIN = int(os.environ.get("JARVIS_EVENT_LEAD_MIN", "15"))
 STORAGE_FULL = float(os.environ.get("JARVIS_STORAGE_FULL", "98"))
 ENABLED = os.environ.get("JARVIS_PROACTIVE", "1").strip() not in ("0", "false", "no", "off")
@@ -217,21 +220,33 @@ def start():
         return
     import briefing
 
+    import ha_events
+
     def loop():
         time.sleep(20)                 # let the HUD connect first
+        last_full = 0.0
         while True:
             states = []
             try:
                 states = briefing._ha_states()
             except Exception:  # noqa: BLE001 — HA restarting
                 pass
-            for check in (lambda: appliances(states), calendar, lambda: departure_prep(states), lambda: storage(states),
-                          nas, parcel_today, lambda: printer_watch(states), lambda: away_check.check(states),
-                          lambda: morning_echo.check(states), lambda: phone_answers(states),
-                          lambda: power_budget(states), lambda: proactive.tick(states)):
+            # A door, water or the printer wakes the state checks at once (ha_events.WAKE); the checks
+            # that ask other services (calendar, NAS, parcels) keep their 30-s round.
+            full = time.time() - last_full >= EVERY
+            checks = [lambda: appliances(states), lambda: storage(states), lambda: printer_watch(states),
+                      lambda: away_check.check(states), lambda: morning_echo.check(states),
+                      lambda: phone_answers(states), lambda: proactive.tick(states)]
+            if full:
+                last_full = time.time()
+                checks += [calendar, lambda: departure_prep(states), nas, parcel_today, lambda: power_budget(states),
+                           token_budget.check, lambda: airing.check(states), lambda: airing.mould_check(states)]
+            for check in checks:
                 try:
                     check()
                 except Exception as e:  # noqa: BLE001 — one dead source must not silence the rest
                     print(f"  watcher: {e}", flush=True)
-            time.sleep(EVERY)
+            ha_events.WAKE.wait(max(0.0, EVERY - (time.time() - last_full)))
+            ha_events.WAKE.clear()
+            time.sleep(WAKE_GAP)       # a burst of changes (arriving home) becomes one round
     threading.Thread(target=loop, daemon=True).start()

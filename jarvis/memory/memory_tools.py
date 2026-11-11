@@ -121,7 +121,9 @@ def find(text):
     out = []
     for path in _facts():
         for b in _bullets(path):
-            if want in " ".join(b.lower().split()):
+            # saves get [[links]] added (memory_intel.link_entities); "Anna hat …" must still find "[[Anna]] hat …"
+            plain = re.sub(r"\[\[(?:[^\]|]*\|)?([^\]]+)\]\]", r"\1", b)
+            if want in " ".join(b.lower().split()) or want in " ".join(plain.lower().split()):
                 out.append((path, b))
     return out
 

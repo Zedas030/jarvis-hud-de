@@ -76,6 +76,13 @@ def wanted():
         return bool(fresh) and not any(fresh)
 
 
+def open_tabs():
+    """How many HUD tabs on this PC reported lately — server.py opens no new one when there is one."""
+    now = time.time()
+    with _LOCK:
+        return sum(1 for v, at in TABS.values() if now - at < (VISIBLE_S if v else STALE_S))
+
+
 def _tail(text, n=80):
     """The end of a long line, starting at a word — two lines fit on the card."""
     text = " ".join((text or "").split())
