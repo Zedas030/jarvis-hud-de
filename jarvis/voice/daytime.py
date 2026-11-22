@@ -24,6 +24,8 @@ import commands
 import events
 
 WHISPER_HOURS = os.environ.get("JARVIS_WHISPER_HOURS", "").strip() or events.QUIET_HOURS
+# Without own whisper hours the night voice follows "Gute Nacht" (events.sleeping), not the clock (17.11.2026).
+_WHISPER_SET = bool(os.environ.get("JARVIS_WHISPER_HOURS", "").strip())
 LATE_FROM = int(os.environ.get("JARVIS_LATE_FROM", "21"))
 LATE_VOLUME = float(os.environ.get("JARVIS_LATE_VOLUME", "0.8"))
 SLOW = float(os.environ.get("JARVIS_LATE_SPEED", "1.08"))
@@ -53,11 +55,12 @@ def override():
 def mode(now=None):
     if not ENABLED:
         return "tag"
+    given = now
     now = now or dt.datetime.now()
     forced = override()
     if forced:
         return forced
-    if _in_hours(WHISPER_HOURS, now):
+    if _in_hours(WHISPER_HOURS, now) if _WHISPER_SET else events.sleeping(given):
         return "nacht"
     if now.hour >= LATE_FROM:
         return "spät"
@@ -78,7 +81,7 @@ def volume_factor(now=None):
     m = mode(now)
     if m == "spät":
         return LATE_VOLUME
-    if m == "nacht" and override() == "nacht" and not events.quiet_now(now):
+    if m == "nacht" and override() == "nacht" and not events.sleeping(now):
         return LATE_VOLUME                     # whispering by hand outside the quiet hours: softer too
     return 1.0
 

@@ -33,6 +33,7 @@ config/home.json
 config/proactive.yaml
 config/routines.json
 config/learned.json
+config/heard.json
 config/aussprache.json
 config/apps.json
 config/devices.json

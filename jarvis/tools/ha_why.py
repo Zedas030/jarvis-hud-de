@@ -116,6 +116,10 @@ def explain(entity_id, now=None, states=None):
 def handle(n):
     if not _ASK.search(n):
         return None
+    # "Warum läuft die Musik im Schlafzimmer?" is about Spotify, not a switch: matched by the room
+    # alone it asked "Nachtruhe Schlafzimmer oder LED?" three times in a row (16.11.2026)
+    if re.search(r"\b(musik|spotify|song|lied|playlist|titel)\b", n):
+        return None
     import briefing
     import router
     if not briefing.HA_TOKEN:

@@ -289,6 +289,44 @@ class Conversation(unittest.TestCase):
         self.assertTrue(c.wait_state(st.SPEAKING, 2), c.states())
         self.assertEqual(len([p for p in s.posts if p[0] == "/api/run"]), 1)
 
+    def test_quiet_answer_is_shown_not_spoken(self):
+        """17.11.2026: the music started, he hears it — "Die Musik läuft jetzt im Wohnzimmer" is not said."""
+        from voice_fakes import FakeResponse, answer_events
+        self.session, c, _ = make_session()
+        s = self.session
+
+        def post(path, body, stream=False, timeout=30):
+            s.posts.append((path, body))
+            return FakeResponse([{"t": "quiet"}] + answer_events("Die Musik läuft jetzt im Wohnzimmer."))
+        s._post = post
+        s.text("Musik im Wohnzimmer an", typed=False)
+        self.assertTrue(c.wait_event("speak_done", 3))
+        self.assertEqual(c.of("audio_begin"), [], "nothing may be spoken")
+        self.assertNotIn(st.SPEAKING, c.states())
+
+    def test_noise_late_in_the_sentence_does_not_replay_it(self):
+        """17.11.2026: his own echo paused a nearly finished one-sentence answer and it was said twice."""
+        s, c = self.speak_and_wait(["Jarvis, ist das Licht an"], answer="Die LED im Wohnzimmer ist an.", hold=True)
+        begins = c.wait_event("audio_begin", 3)
+        sid = begins[0]["id"]
+        time.sleep(0.85)                            # ~1.1 s sentence: most of it has sounded
+        feed_ms(s, noise_burst(160))
+        self.assertTrue(c.wait_state(st.INTERRUPTED, 1), c.states())
+        feed_ms(s, silence(300))                    # nothing said: resume
+        self.assertTrue(c.wait_state(st.LISTENING, 2), c.states())
+        self.assertEqual([b["id"] for b in c.of("audio_begin")].count(sid), 1, "the sentence must not play twice")
+        self.assertFalse(c.of("speak_done")[-1]["interrupted"])
+        self.assertIn("Wohnzimmer", c.of("speak_done")[-1]["spoken"])
+
+    def test_noise_early_in_the_sentence_replays_it(self):
+        s, c = self.speak_and_wait(["Jarvis, ist das Licht an"], answer="Die LED im Wohnzimmer ist an.", hold=True)
+        sid = c.wait_event("audio_begin", 3)[0]["id"]
+        feed_ms(s, noise_burst(160))                # right at the start: he missed most of it
+        self.assertTrue(c.wait_state(st.INTERRUPTED, 1), c.states())
+        feed_ms(s, silence(300))
+        begins = c.wait_event("audio_begin", 2, n=2)
+        self.assertEqual([b["id"] for b in begins].count(sid), 2)
+
     def test_stop_word_ends_the_answer(self):
         s, c = self.interrupt(["Jarvis, mach das Licht aus", "stopp"])
         feed_ms(s, silence(300))

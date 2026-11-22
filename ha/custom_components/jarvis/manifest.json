@@ -1,0 +1,12 @@
+{
+  "domain": "jarvis",
+  "name": "Jarvis",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["conversation"],
+  "documentation": "https://github.com/Zedas030/jarvis-hud/blob/main/docs/sprache.md",
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "requirements": [],
+  "version": "1.2.1"
+}

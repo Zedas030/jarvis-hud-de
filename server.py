@@ -112,6 +112,7 @@ if __name__ == "__main__" and os.environ.get("JARVIS_CHILD") != "1":
 
 import commands    # noqa: E402
 import devices     # noqa: E402
+import remote_ask  # noqa: E402
 import icloud_calendar  # noqa: E402
 import billing  # noqa: E402
 import briefing    # noqa: E402
@@ -446,11 +447,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
 
-    def _bytes(self, data, ctype, code=200, cache="no-store"):
+    def _bytes(self, data, ctype, code=200, cache="no-store", etag=None):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", cache)
+        if etag:
+            self.send_header("ETag", etag)
         self.end_headers()
         self.wfile.write(data)
 
@@ -515,10 +518,67 @@ class Handler(BaseHTTPRequestHandler):
             req = json.loads(self._read(MAX_JSON) or b"{}")
         except (ValueError, TypeError):
             return self._json({"error": "bad json"}, 400)
-        token = devices.pair(req.get("code"), req.get("name"))
+        # pair.html?schluessel: a key for Home Assistant's voice satellite, shown once, no cookie
+        kind = "ask" if req.get("purpose") == "ask" else "device"
+        token = devices.pair(req.get("code"), req.get("name"), kind=kind)
         if not token:
             return self._json({"error": "Code falsch oder abgelaufen."}, 403)
+        if kind == "ask":
+            audit.write("pair", key="ask", name=str(req.get("name") or "")[:40])
+            return self._json({"ok": True, "key": token})
         return self._json({"ok": True}, headers={"Set-Cookie": devices.cookie_header(token)})
+
+    def _ask_device(self):
+        """The device id behind `Authorization: Bearer <ask key>`, or "" — for /api/ask and /api/hear."""
+        auth = self.headers.get("Authorization", "")
+        key = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
+        return devices.check(key, kind="ask") or ""
+
+    def _hear(self):
+        """Home Assistant's speech to text for the Voice PE: raw 16 kHz 16-bit mono PCM with the ask key, the
+        transcript back from the GPU Whisper (remote_ask.hear). An empty body only warms the model up.
+        Never audited with its text, like /api/ask."""
+        if not self._host_ok():
+            return self._json({"error": "invalid host"}, 403)
+        if not self._ask_device():
+            return self._json({"error": "unauthorized"}, 401)
+        try:
+            pcm = self._read(remote_ask.HEAR_MAX_S * remote_ask.HEAR_RATE * 2)
+        except ValueError:
+            self.close_connection = True
+            return self._json({"error": "too long"}, 413)
+        if not pcm:
+            remote_ask.warm()
+            return self._json({"text": "", "status": "warm"})
+        out = remote_ask.hear(pcm)
+        metrics.counter("hear_total", status=out["status"])
+        return self._json(out)
+
+    def _ask(self):
+        """Home Assistant's voice satellite: one question with a key, one answer (remote_ask.py). With "speak"
+        it is said on the room's speaker while it is written, and only what that speaker could not say comes back.
+        No Origin and no page token here — Home Assistant has neither; the key in the Authorization header
+        is what a browser could never send on its own, so it guards this the way the token guards /api/run."""
+        if not self._host_ok():
+            return self._json({"error": "invalid host"}, 403)
+        did = self._ask_device()
+        if not did:
+            return self._json({"error": "unauthorized"}, 401)
+        try:
+            req = json.loads(self._read(MAX_JSON) or b"{}")
+        except (ValueError, TypeError):
+            return self._json({"error": "bad json"}, 400)
+        if not isinstance(req, dict):
+            return self._json({"error": "bad json"}, 400)
+        text = " ".join(str(req.get("text") or "").split())[:remote_ask.MAX_TEXT]
+        if not text:
+            return self._json({"text": "Ich habe nichts verstanden.", "status": "empty"})
+        room = " ".join(str(req.get("room") or "").split())[:40]
+        name = next((d["name"] for d in devices.listing() if d["id"] == did), did)
+        out = remote_ask.ask(text, PORT, API_TOKEN, room=room, speak=bool(req.get("speak")))
+        audit.write("ask", device=name, room=room, status=out["status"], spoken=bool(out.get("spoken_on")))
+        metrics.counter("ask_total", status=out["status"])
+        return self._json(out)
 
     def _token_ok(self):
         supplied = self.headers.get("X-Jarvis-Token", "")
@@ -590,7 +650,7 @@ class Handler(BaseHTTPRequestHandler):
                 tts=_tts_status(),
                 usage=commands.load().get("usage"),
                 billing=billing.summary(),
-                wake=wakeword.status(), spotify=spotify.status(), ambience=ambience.status(), timers=scheduler.public(), quiet=events.quiet_now(),
+                wake=wakeword.status(), spotify=spotify.status(), ambience=ambience.status(), timers=scheduler.public(), quiet=events.sleeping(),
                 night_volume=NIGHT_VOLUME, voice_factor=_voice_factor(), voice_mode=daytime.mode(),
                 focus=focus.state().get("until") if focus.active() else None,
                 fallback=fallback_llm.status(),
@@ -653,6 +713,20 @@ class Handler(BaseHTTPRequestHandler):
         f = (UI / rel).resolve()
         if not str(f).startswith(str(UI.resolve())) or not f.is_file():
             return self._bytes(b"not found", "text/plain", 404)
+        if rel != "index.html" and not rel.startswith("vendor/"):
+            # Scripts and styles: the iPad keeps them and only asks "still the same?" (304, a few bytes)
+            # instead of fetching ~350 KB over Tailscale on every start. A stalled download used to leave
+            # the bare HUD with a layout menu that did nothing (17.11.2026). index.html stays no-store.
+            st = f.stat()
+            etag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
+            if etag in [t.strip() for t in (self.headers.get("If-None-Match") or "").split(",")]:
+                self.send_response(304)
+                self.send_header("ETag", etag)
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                return None
+            return self._bytes(f.read_bytes(), mimetypes.guess_type(f.name)[0] or "application/octet-stream",
+                               cache="no-cache", etag=etag)
         data = f.read_bytes()
         if rel == "index.html":
             data = data.replace(b"__JARVIS_TOKEN__", API_TOKEN.encode())
@@ -691,6 +765,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "only on the PC"}, 403)
             if p == "/api/pair":
                 return self._pair()
+            if p == "/api/ask":
+                return self._ask()
+            if p == "/api/hear":
+                return self._hear()
             if not self._device_ok():
                 return self._json({"error": "device not paired"}, 401)
         if p == "/api/permission/request":
@@ -755,7 +833,7 @@ class Handler(BaseHTTPRequestHandler):
                     # announcement cannot start, the sound is already made and the device plays it after all.
                     chunks, mime, provider = voice.speak_stream(text)
                     try:
-                        secs = sonos.say(target, chunks, mime, text, quiet=events.quiet_now())
+                        secs = sonos.say(target, chunks, mime, text, quiet=events.sleeping())
                         return self._json({"sonos": sonos.label(target), "seconds": secs, "voice": provider})
                     except sonos.Fallback as e:
                         log.warning("Sonos: %s", str(e.__cause__)[:160])
@@ -1028,6 +1106,8 @@ class Handler(BaseHTTPRequestHandler):
                 reply = route["reply"]
                 emit(dict(t="note", message=f"lokal erledigt ({route['handler']}) — 0 Tokens"))
                 emit(dict(t="route", model="lokal", groups=[route["handler"]], reason="Router, 0 Tokens"))
+                if route.get("silent"):
+                    emit(dict(t="quiet"))            # done, and he hears it (music): shown, not spoken
                 emit(dict(t="delta", text=reply))
                 emit(dict(t="complete", ms=int((time.time() - t0) * 1000)))
                 try:
@@ -1227,7 +1307,7 @@ class Handler(BaseHTTPRequestHandler):
             message = cmd["message"]
 
         if runtime.LEAN:
-            return self._lean(message, emit, typed=bool(payload.get("typed")), hint=str(payload.get("hint") or "")[:300])
+            return self._lean(message, emit, typed=bool(payload.get("typed")), hint=str(payload.get("hint") or "")[:1000])
 
         last = commands.load().get("last_turn_at") or 0
         if SESSION["id"] and time.time() - last > SESSION_IDLE_MIN * 60:

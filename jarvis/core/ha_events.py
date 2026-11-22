@@ -110,6 +110,16 @@ def apply_event(data):
     return worth_waking(eid, old, new)
 
 
+def _satellite(data):
+    """A voice satellite starting to listen silences Jarvis at once (satellite_quiet.py)."""
+    if str(data.get("entity_id") or "").startswith("assist_satellite."):
+        try:
+            import satellite_quiet
+            satellite_quiet.on_change(data)
+        except Exception as e:  # noqa: BLE001 — never let it break the live view
+            log.warning("satellite_quiet: %s", str(e)[:120])
+
+
 def _ws_url():
     return HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
 
@@ -126,8 +136,8 @@ def _session():
         ws.send(json.dumps({"id": 2, "type": "get_states"}))
         # alarms HA forwards for Jarvis (Uptime Kuma's webhook, kuma_alerts.py)
         ws.send(json.dumps({"id": 3, "type": "subscribe_events", "event_type": "jarvis_alert"}))
-        # alarms HA forwards for Jarvis (Uptime Kuma's webhook, kuma_alerts.py)
-        ws.send(json.dumps({"id": 3, "type": "subscribe_events", "event_type": "jarvis_alert"}))
+        # "Musik wandert mit" moved a song onto the bedroom Sonos: Jarvis adds the rest of the queue (sonos_queue.py)
+        ws.send(json.dumps({"id": 4, "type": "subscribe_events", "event_type": "jarvis_musik_sonos"}))
         while True:
             try:
                 msg = json.loads(ws.recv(timeout=STALE_S))
@@ -144,12 +154,29 @@ def _session():
                     _CACHE.update({s["entity_id"]: s for s in msg.get("result") or []})
                     _ST.update(live=True, since=now, error="")
                 log.info("Home Assistant live verbunden (%d Entitäten)", len(_CACHE))
+                if not _ST.get("duck_recovered"):   # once per start: volume an earlier Jarvis left turned down
+                    _ST["duck_recovered"] = True
+                    try:
+                        import listen_duck
+                        threading.Thread(target=listen_duck.recover, daemon=True, name="listen-duck-recover").start()
+                        import alexa_voice
+                        threading.Thread(target=alexa_voice.recover, daemon=True, name="echo-volume-recover").start()
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("listen_duck: %s", str(e)[:120])
                 WAKE.set()
             elif msg.get("type") == "event" and (msg.get("event") or {}).get("event_type") == "jarvis_alert":
                 import kuma_alerts
                 kuma_alerts.on_event((msg.get("event") or {}).get("data") or {})
+            elif msg.get("type") == "event" and (msg.get("event") or {}).get("event_type") == "jarvis_musik_sonos":
+                try:
+                    import sonos_queue
+                    sonos_queue.on_event((msg.get("event") or {}).get("data") or {})
+                except Exception as e:  # noqa: BLE001 — never let it break the live view
+                    log.warning("sonos_queue: %s", str(e)[:120])
             elif msg.get("type") == "event":
-                if apply_event((msg.get("event") or {}).get("data") or {}):
+                data = (msg.get("event") or {}).get("data") or {}
+                _satellite(data)
+                if apply_event(data):
                     _ST["wakes"] += 1
                     WAKE.set()
 

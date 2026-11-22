@@ -33,8 +33,20 @@ STATE = {"running": False, "error": "", "sessions": 0, "bind": "", "port": 0, "t
 SOCKETS = {}                # id(ws) -> ws, so a newer session of the same device can close an older one
 
 
+_SHARED = {"s": None}       # the running engine's Shared, for satellite_quiet.py
+
+
 def status():
     return {k: v for k, v in STATE.items() if k != "thread"}
+
+
+def sessions():
+    """The live voice-engine sessions (PC, iPad, phone); [] while the engine is off."""
+    shared = _SHARED["s"]
+    if shared is None:
+        return []
+    with shared.lock:
+        return list(shared.sessions.values())
 
 
 def start(port, token, cfg=None):
@@ -47,6 +59,7 @@ def start(port, token, cfg=None):
         STATE["error"] = "websockets fehlt (pip install websockets)"
         return status()
     shared = voice_engine.Shared(port, token, cfg)
+    _SHARED["s"] = shared
     STATE.update(bind=shared.cfg.engine.bind, port=int(shared.cfg.engine.port))
     t = threading.Thread(target=_serve, args=(shared,), daemon=True, name="voice-ws")
     STATE["thread"] = t

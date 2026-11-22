@@ -149,6 +149,56 @@ def play_context(uri, device=None):
         return False
 
 
+_USER = {"id": ""}
+
+
+def user_id():
+    """The account's Spotify user id (GET /me needs no extra scope), cached; "" when Spotify cannot be asked."""
+    if not _USER["id"]:
+        code, data = _api("GET", "/me")
+        _USER["id"] = (data or {}).get("id", "") if code == 200 else ""
+    return _USER["id"]
+
+
+def play_liked(device=None):
+    """Start the account's liked songs ("Lieblingssongs") as a whole list. The Web API has no URI for them, but
+    Connect devices take spotify:user:<id>:collection as context — so the list goes on after the first song,
+    unlike a single track in `uris`. Reading the library itself would need a new login with another scope."""
+    uid = user_id()
+    if not uid:
+        return False
+    with _LOCK:
+        forget()                                  # an explicit wish: the wake-word hold must not pause it again
+    return play_context(f"spotify:user:{uid}:collection", device)
+
+
+def find_artist(query):
+    """(spotify:artist:… , name as Spotify writes it) for a spoken artist name, or ("", ""). Spotify's search
+    forgives Whisper's spelling ("Linkin Park" for "Lincoln Park"); the search needs no extra scope."""
+    q = " ".join(str(query or "").split())[:100]
+    if not q:
+        return "", ""
+    code, data = _api("GET", "/search?" + urllib.parse.urlencode({"q": q, "type": "artist", "limit": 5}))
+    items = [a for a in (((data or {}).get("artists") or {}).get("items") or []) if a.get("uri")] if code == 200 else []
+    if not items:
+        return "", ""
+    exact = [a for a in items if (a.get("name") or "").lower() == q.lower()]
+    best = exact[0] if exact else items[0]        # Spotify ranks by relevance and popularity
+    return best["uri"], best.get("name") or q
+
+
+def play_artist(query, device=None):
+    """All songs of an artist ("spiel alle Songs von Linkin Park"): the artist as context, so Spotify plays on
+    through the artist's tracks like the play button on the artist's page. -> name, or "" when nothing fits
+    or Spotify did not take it."""
+    uri, name = find_artist(query)
+    if not uri:
+        return ""
+    with _LOCK:
+        forget()                                  # an explicit wish: the wake-word hold must not pause it again
+    return name if play_context(uri, device) else ""
+
+
 def _device_q(device):
     return "?device_id=" + urllib.parse.quote(device) if device else ""
 
@@ -378,6 +428,28 @@ def now_playing():
     ctx = ((state.get("context") or {}).get("uri") or "")
     ctx = re.sub(r"^spotify:user:[^:]+:", "spotify:", ctx)     # "spotify:user:spotify:playlist:x" → a plain playlist URI
     return ctx, ((state.get("item") or {}).get("uri") or ""), (state.get("device") or {}).get("id")
+
+
+def upcoming(limit=20):
+    """Track URIs Spotify would play next: its queue holds the rest of the playlist (shuffle and "add to queue"
+    included), about 20 tracks and with repeats when the list is short. Without the running track and without
+    repeats; [] when nothing plays or Spotify does not answer."""
+    if not configured():
+        return []
+    try:
+        code, data = _api("GET", "/me/player/queue")
+    except Exception:  # noqa: BLE001 — offline or no login
+        return []
+    if code != 200 or not data:
+        return []
+    seen = {((data.get("currently_playing") or {}).get("uri") or "")}
+    out = []
+    for item in data.get("queue") or []:
+        uri = (item or {}).get("uri") or ""
+        if uri.startswith("spotify:track:") and uri not in seen:
+            seen.add(uri)
+            out.append(uri)
+    return out[:max(0, int(limit))]
 
 
 def pause_active():

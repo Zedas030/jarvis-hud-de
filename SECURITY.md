@@ -34,6 +34,14 @@ Same-day services and work mails stay out. With `TRACK17_API_KEY`, 17TRACK (a th
 each tracking number to follow it across carriers — nothing else (no address, no shop, no mail
 content); with only `DHL_API_KEY`, DHL itself is asked about DHL numbers.
 
+The bedroom queue (`sonos_queue.py`, since 19.11.2026, the user's choice): when the Home Assistant
+automation "Musik wandert mit" moves a song onto the bedroom Sonos, it fires `jarvis_musik_sonos`
+{player, track}. Jarvis reads Spotify's queue and adds those tracks behind the song with
+`media_player.play_media` (`enqueue: add`) once that speaker plays that very track. Nothing else: no
+start, stop, volume or other speaker. The event comes from HA with the admin token's subscription; the
+player must be a `media_player.` and the track a plain `spotify:track:` URI. Every append is written to
+the HA logbook ("Jarvis Musik"), and `JARVIS_SONOS_QUEUE=0` turns it off.
+
 Facts from conversations (`reflection.remember`, since 10.11.2026, the user's choice): after a
 conversation the learning loop may save up to three lasting facts the user said himself, without a
 card, through the same `memory_save` path (duplicate and contradiction checks, `privacy.is_work`).
@@ -54,7 +62,9 @@ Several mailboxes (`mailboxes.py`, `MAIL2_…`): all read-only except drafts (AP
 "mark as read"; one failing account never blocks the others. Every module that reads mail over a
 period (inbox, bookings, deliveries, parcels) goes through `mailboxes.recent` and never looks back
 more than `JARVIS_MAIL_LOOKBACK_HOURS` (default 24) — less foreign content read, fewer old mails
-to act on.
+to act on. The one exception is `mail_search`, a lookup the user asks for ("did X ever write?"): it
+goes back `JARVIS_MAIL_SEARCH_DAYS` (default 365) but reads only date, sender and subject, skips
+Sent, Trash and Spam, and is marked untrusted like the inbox.
 
 Before a calendar entry is offered or entered — the model's `calendar_add`, bookings from mail,
 deliveries — code reads that day first (`icloud_calendar.check`): an entry with a similar title on
@@ -173,6 +183,17 @@ Mail, web pages, calendar entries, files, clipboard, screen text and day prepara
 «FREMDE DATEN» markers (fake end markers inside are defused). After such a tool, every
 LIMITED_WRITE call in the same request needs a card ("taint"). One MCP process per request in lean mode.
 
+`content_guard.py` checks every tool result in `jarvis_mcp.handle_call` before the model and the audit log
+see it. Secrets recognisable by their shape — API keys (`sk-…`, `gsk_…`, `AIza…`), GitHub/Slack/AWS tokens,
+JWTs such as Home Assistant long-lived tokens, `Bearer …`, private key blocks, WireGuard keys, credentials in
+database URLs, and `…PASSWORD=/TOKEN=/SECRET=/API_KEY=` lines — are replaced by `[entfernt: <Art>]`, so a key
+in the clipboard, a file or on the screen never travels to a cloud model. Plain sentences ("Passwort: …" in
+a note) stay readable. In results of untrusted tools it also looks for phrases addressed to an assistant
+(German and English: overriding instructions, a new role, role markers, "do not tell the user", sending
+data to a URL); a hit puts one warning line in front of the content inside the markers. Both write an audit
+line `guard` with the kinds found, never the text. The taint card stays the gate; the guard only makes an
+attempt visible. `JARVIS_CONTENT_GUARD=0` turns it off.
+
 ## Privacy
 
 - Work topics are not logged, evaluated, saved, planned or watched (`privacy.py`, `JARVIS_WORK_TERMS`).
@@ -183,6 +204,9 @@ LIMITED_WRITE call in the same request needs a card ("taint"). One MCP process p
 - Files only below `JARVIS_FILE_ROOTS`; path traversal is resolved and refused.
 - The Gemini free tier may train on prompts, so it never sees mail, calendar, health or briefing turns.
 - Background jobs that read conversations or health data use Claude or Groq/Ollama only.
+- Every destination outside the house is listed in `data_flows.py` with what it receives and the setting that turns it off;
+  `docs/datenfluesse.md` is generated from it, `scripts/data_flows.py` shows what is active in this installation, and
+  "Welche Daten gehen in die Cloud?" is answered locally. A test fails when the code names a host that is not in the list.
 
 ## Learning without self-modification
 
@@ -203,6 +227,12 @@ Alarms still ring. "weitermachen" resumes.
 
 `logs/audit.jsonl`: every tool call (class, shortened arguments with secrets masked, success),
 every card decision, local actions, pauses. 90 days. "Was hast du heute gemacht?" reads it.
+
+## Questions from outside (`/api/ask`, `remote_ask.py`)
+
+Home Assistant's voice satellite (the Voice PE) asks on the remote port with a key from a normal pairing (`pair.html?schluessel`, kind `ask` in `config/devices.json`, stored as a hash like device cookies). A key only opens `/api/ask` and `/api/hear`, never the HUD, and a device cookie is no key. No Origin or page token there — Home Assistant has neither; the `Authorization: Bearer` header is what a browser cannot send cross-site without a CORS preflight, which the server never answers. The question goes to `/api/run` on the loopback with the page token, so router, tools, taint and audit stay as they are. A card cannot be confirmed from there: it is denied at once. Every question is audited (`ask`, device, room, status, whether the room's speaker said it), never its text. With `speak` the answer is said on the speaker of the satellite's room (config/home.json), never anywhere else. A key is revoked under 📱 Geräte.
+
+`/api/hear` takes the same key: raw 16 kHz mono PCM (at most 30 s) from Home Assistant, transcribed by the PC's Whisper (`remote_ask.hear`), the text goes back and nothing is kept or audited. An empty body only loads the model. It runs no tool; the transcript becomes a question only through `/api/ask`.
 
 ## Network
 

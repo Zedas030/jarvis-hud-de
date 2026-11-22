@@ -32,6 +32,25 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 GHOSTS = re.compile(
     r"untertitel|amara\.org|vielen dank (fürs|für's|für das) zuschauen|bis zum nächsten mal|swr \d{4}|zdf|"
     r"copyright|^(danke|tschüss|ja|äh|ähm|hm+)\W*$", re.I)
+# Room noise sent as speech: the Voice PE handed over 15 s without a word and Whisper wrote "Ja, ja, ja, ja."
+# (18.11.2026). A run of filler words only, however often repeated, is not a question.
+REPEATS = re.compile(r"^(\W*\b(ja|danke|äh|ähm|hm+|mhm)\b)+\W*$", re.I)   # not "nein": that answers a question
+# Whisper's own signs of a segment without speech (the thresholds openai-whisper uses for silence and for
+# looping text): very likely no speech and a weak guess, or text that repeats itself.
+NO_SPEECH_P = 0.6
+WEAK_LOGPROB = -1.0
+LOOPING = 2.4
+
+
+def _ghost_segment(s):
+    try:
+        if s.no_speech_prob > NO_SPEECH_P and s.avg_logprob < WEAK_LOGPROB:
+            return True
+        return s.compression_ratio > LOOPING
+    except (AttributeError, TypeError):      # a stand-in segment without the numbers: keep it
+        return False
+
+
 NOISE = re.compile(r"^\W*[\[(*♪]?\s*(musik|music|applaus|lachen|gelächter|♪)", re.I)
 MARKERS = re.compile(r"[\[(][^\])]{0,40}[\])]")
 
@@ -114,7 +133,7 @@ class Recognizer:
                 audio, language=voice.LOCAL_STT_LANG, beam_size=beam, vad_filter=beam > 1,
                 condition_on_previous_text=False, initial_prompt=self.vocabulary(),
                 hotwords=voice.LOCAL_STT_HOTWORDS or None)
-            text = " ".join(s.text.strip() for s in segs).strip()
+            text = " ".join(s.text.strip() for s in segs if not _ghost_segment(s)).strip()
         finally:
             voice._WHISPER["busy"] -= 1
             voice._WHISPER["last_use"] = time.time()
@@ -128,11 +147,14 @@ class Recognizer:
             return ""
         if GHOSTS.search(text) and len(text) < 60:
             return ""
+        if REPEATS.match(text):
+            return ""
         return text
 
     def final(self, pcm):
+        import heard_fix
         with self.lock:
-            return self.clean(self._run(pcm, self.final_beam))
+            return heard_fix.fix(self.clean(self._run(pcm, self.final_beam)))   # his usual mishearings put right
 
     def partial(self, pcm):
         if not self.lock.acquire(blocking=False):

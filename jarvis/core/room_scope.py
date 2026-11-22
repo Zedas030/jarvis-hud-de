@@ -11,10 +11,11 @@ Nutzer" keeps; that automation owns the hold times against radar ghosts). This m
                       and a command that would hit different devices in the two rooms is asked back
   offline             Home Assistant not reachable: commands behave as before, answers come from the device
 
-  enabled()           feature flag JARVIS_ROOM_SCOPE (default on) and a presence helper configured
+  enabled()          feature flag JARVIS_ROOM_SCOPE (default on) and a presence helper configured
   current()           {"room", "sure", "candidates", "status"} — status "ok", "offline" or "off"
   eids(room)          entity ids in that room ("" -> empty set)
   room_of(eid)        the room an entity is in, "" if HA has no area for it
+  answer_room(area)   where a voice satellite's answer is said: the one busy room, else the satellite's own
   line()              the <kontext> line: room, how sure, the devices there
 
 Switched off (JARVIS_ROOM_SCOPE=0) every function answers as if nothing were known, and router.py behaves
@@ -144,6 +145,23 @@ def current(now=None):
     sure = not busy or room.lower() in lower      # its own sensor busy, or nobody seen at all (asleep, still)
     cands = [room] + sorted(b for b in busy or () if b.lower() != room.lower())
     return {"room": room, "sure": sure, "candidates": [room] if sure else cands, "status": "ok"}
+
+
+def answer_room(satellite_room=""):
+    """The room whose speaker answers a voice satellite (Nutzer, 19.11.2026: the ReSpeaker stood in the living
+    room, belongs to the bedroom, and always answered in the bedroom). The one room where a presence sensor
+    sees someone; with someone in several rooms the satellite's own room (its HA area). With nobody seen
+    right now (sitting still, a radar gap) the presence helper's room — it holds the last room against
+    ghosts — and only without that the satellite's room."""
+    own = _room_for_area(satellite_room)
+    if not enabled():
+        return own or whereabouts.room()
+    busy = _busy()
+    if busy and len(busy) == 1:
+        return next(iter(busy))
+    if busy:
+        return own or whereabouts.room()
+    return whereabouts.room() or own
 
 
 def forget():

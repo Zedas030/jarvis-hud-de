@@ -36,11 +36,22 @@
   var saveLayout = function (id) {
     var token = document.querySelector('meta[name="jarvis-token"]');
     if (!token) return Promise.reject(new Error('no token'));
+    // Back from the background the iPad's connection can hang for a minute: give up after 5 s
+    // (the pick is kept as pending and sent again from the reloaded page) instead of a dead menu.
+    var ctl = window.AbortController ? new AbortController() : null;
+    var timer = ctl ? setTimeout(function () { ctl.abort(); }, 5000) : 0;
     return fetch('/api/layout', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'X-Jarvis-Token': token.content },
-      body: JSON.stringify({ layout: id })
-    }).then(function (response) { if (!response.ok) throw new Error('layout sync failed: ' + response.status); });
+      body: JSON.stringify({ layout: id }),
+      signal: ctl ? ctl.signal : undefined
+    }).then(function (response) {
+      clearTimeout(timer);
+      if (!response.ok) throw new Error('layout sync failed: ' + response.status);
+    }, function (e) { clearTimeout(timer); throw e; });
+  };
+  var keepPending = function (id) {
+    try { localStorage.setItem(PENDING, JSON.stringify({ id: id, at: Date.now() })); } catch (err) { /* private mode */ }
   };
   var clearPending = function () { try { localStorage.removeItem(PENDING); } catch (e) { /* private mode */ } };
   if (!pending) clearPending();
@@ -55,12 +66,15 @@
     sel.onchange = function () {
       var selected = sel.value;
       store(selected);
+      // Kept BEFORE the request: the page reloads itself when the app comes back from the background
+      // or the server restarted, and that cut the request off — the pick was lost without a word.
+      keepPending(selected);
+      sel.disabled = true;
       var target = new URL(location.href);
       target.searchParams.delete('view');
       var go = function () { location.href = target.pathname + target.search + target.hash; };
       saveLayout(selected).then(function () { clearPending(); go(); }, function (e) {
         console.warn('[jarvis] layout not saved yet, retrying after reload:', e);
-        try { localStorage.setItem(PENDING, JSON.stringify({ id: selected, at: Date.now() })); } catch (err) { /* private mode */ }
         go();
       });
     };

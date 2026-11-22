@@ -12,6 +12,7 @@ Which device speaks where lives in state.json -> speech_outputs {device id: enti
 ("Wo ich bin") means the speaker of the room the presence sensors see the user in (whereabouts.py);
 it is also the default once presence_room is configured. "" is the device itself, chosen on purpose.
 """
+import datetime as dt
 import ipaddress
 import json
 import os
@@ -35,6 +36,10 @@ PORT = int(os.environ.get("JARVIS_SONOS_PORT", "8723"))
 HOST = os.environ.get("JARVIS_SONOS_HOST", "").strip()           # empty: the address that reaches HA
 VOLUME = float(os.environ.get("JARVIS_SONOS_VOLUME", "0.35"))
 NIGHT_VOLUME = float(os.environ.get("JARVIS_SONOS_NIGHT_VOLUME", "0.2"))
+# Late in the evening a little softer even before "Gute Nacht": at 23:27 the day volume (63 %) was far too
+# loud in the bedroom (Nutzer, 19.11.2026). From LATE_FROM o'clock until 7; LATE_VOLUME 0 = off.
+LATE_VOLUME = float(os.environ.get("JARVIS_SONOS_LATE_VOLUME", "0.25"))
+LATE_FROM = int(os.environ.get("JARVIS_SONOS_LATE_FROM", "22"))
 # Like Alexa: while Jarvis listens, thinks and answers, the music on the device's speaker drops to this.
 QUIET = float(os.environ.get("JARVIS_SONOS_QUIET", "0.12"))
 HOLD_MAX_S = float(os.environ.get("JARVIS_SPOTIFY_HOLD_MAX_S", "120"))     # the HUD went silent: music back anyway
@@ -418,6 +423,13 @@ def stop(eid, hold=False):
             live.cond.notify_all()
 
 
+def speaking(eid):
+    """An announcement of Jarvis is still running on this speaker (a live stream not yet closed)."""
+    with _LOCK:
+        live = _LIVE_BY_SPEAKER.get(eid)
+    return live is not None and not live.closed
+
+
 def hushed(eid):
     with _LOCK:
         return _HUSHED.get(eid, 0) > time.time()
@@ -466,7 +478,7 @@ def say(eid, chunks, mime, text="", quiet=False):
                 _ha("/api/services/media_player/play_media", {
                     "entity_id": eid, "media_content_id": f"{start()}/sonos/live/{live.token}.mp3",
                     "media_content_type": "music", "announce": True,
-                    "extra": {"volume": _percent(NIGHT_VOLUME if quiet else VOLUME)}})
+                    "extra": {"volume": _percent(voice_volume(quiet))}})
             except Exception as e:  # noqa: BLE001
                 with live.cond:
                     live._close()
@@ -528,6 +540,21 @@ def release(eid):
     _ha("/api/services/media_player/volume_set", {"entity_id": eid, "volume_level": held["volume"]})
 
 
+def _late(now=None):
+    hour = (now or dt.datetime.now()).hour
+    return hour >= LATE_FROM or hour < 7
+
+
+def voice_volume(quiet=False, now=None):
+    """How loud Jarvis' voice is on the Sonos: after "Gute Nacht" NIGHT_VOLUME, late in the evening LATE_VOLUME
+    (never louder than the day), else VOLUME."""
+    if quiet:
+        return NIGHT_VOLUME
+    if LATE_VOLUME > 0 and _late(now):
+        return min(VOLUME, LATE_VOLUME)
+    return VOLUME
+
+
 def _percent(v):
     """HA hands the announce volume to the Sonos audio-clip API unchanged, and that wants 0-100:
     0.35 arrived as 0 — the music dipped for a silent clip."""
@@ -542,5 +569,5 @@ def play(eid, data, mime, text="", quiet=False):
     url = start() + "/sonos/" + _keep(data, mime)
     _ha("/api/services/media_player/play_media", {
         "entity_id": eid, "media_content_id": url, "media_content_type": "music",
-        "announce": True, "extra": {"volume": _percent(NIGHT_VOLUME if quiet else VOLUME)}})
+        "announce": True, "extra": {"volume": _percent(voice_volume(quiet))}})
     return round(duration(data, mime, text) + LEAD_S, 1)

@@ -1,0 +1,32 @@
+# Home Assistant Assist on the Pi: speech to text and text to speech for the Home Assistant Voice PE.
+# Both listen on 127.0.0.1 only — Home Assistant runs with network_mode host and reaches them there;
+# nothing new is open in the LAN. Wyoming has no authentication, so it must stay that way.
+#
+#   on the Pi:  /opt/assist-voice/compose.yml   ->   docker compose up -d
+#   then:       scripts/ha_voice_setup.py --apply (connects both to HA, creates the pipeline "Jarvis")
+#
+# Models are downloaded into ./whisper-data and ./piper-data on the first start (Whisper base ~150 MB,
+# Thorsten medium ~65 MB). base-int8 answers in about 1–2 s on a Pi 4; small-int8 understands German
+# better but takes 3–5 s. Change --model, then `docker compose up -d` again.
+services:
+  whisper:
+    image: rhasspy/wyoming-whisper:3.8.1
+    container_name: wyoming-whisper
+    command: --model base-int8 --language de --beam-size 1
+    ports:
+      - "127.0.0.1:10300:10300"
+    volumes:
+      - ./whisper-data:/data
+    mem_limit: 1500m
+    restart: unless-stopped
+
+  piper:
+    image: rhasspy/wyoming-piper:2.5.2
+    container_name: wyoming-piper
+    command: --voice de_DE-thorsten-medium
+    ports:
+      - "127.0.0.1:10200:10200"
+    volumes:
+      - ./piper-data:/data
+    mem_limit: 500m
+    restart: unless-stopped

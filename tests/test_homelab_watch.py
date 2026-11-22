@@ -68,7 +68,7 @@ class Watch(unittest.TestCase):
 
     def test_parse_pi(self):
         pi = hw.parse_pi(PI_OUT)
-        self.assertEqual((pi["temp"], pi["disk"], pi["load"]), (56.3, 26.0, 1.42))
+        self.assertEqual((pi["temp"], pi["disk"], pi["load"]), (56.3, 26.0, 1.26))   # 5-minute average
         self.assertIn(("docker", "failed"), pi["services"])
         self.assertEqual(len(pi["containers"]), 3)
 
@@ -93,10 +93,10 @@ class Watch(unittest.TestCase):
         bad = [f for f in hw.value_findings({"pi_temp": 80.0}, limits) if not f["ok"]]
         self.assertEqual(len(bad), 1)
         self.assertIn("80 Grad", bad[0]["down"])
-        # one learning week at ~0.8 load: 2.5 is an outlier, 1.1 is not
+        # one learning week at ~0.8 load: 3.5 is an outlier, 1.9 is not (needs 2.5 above normal)
         hw.BASELINE.write_text(json.dumps({"pi_load": {"samples": [0.7, 0.8, 0.9] * 56, "last": 0}}), encoding="utf-8")
-        self.assertTrue(all(f["ok"] for f in hw.value_findings({"pi_load": 1.1}, limits)))
-        odd = [f for f in hw.value_findings({"pi_load": 2.5}, limits) if not f["ok"]]
+        self.assertTrue(all(f["ok"] for f in hw.value_findings({"pi_load": 1.9}, limits)))
+        odd = [f for f in hw.value_findings({"pi_load": 3.5}, limits) if not f["ok"]]
         self.assertEqual(len(odd), 1)
         self.assertIn("sonst um 0,8", odd[0]["down"])
 

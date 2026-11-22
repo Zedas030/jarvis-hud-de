@@ -33,7 +33,7 @@ CLASSES = {
     "mail_events_scan": READ, "mail_events_add": CONFIRM,   # bookings from mail -> calendar, always a card
     "mail_events_undo": LIMITED_WRITE,   # only takes out what Jarvis itself entered automatically
     "shipments_status": READ,            # orders on their way (shipments.py)
-    "mail_inbox": READ, "mail_mark_read": LIMITED_WRITE, "mail_draft": CONFIRM,
+    "mail_inbox": READ, "mail_search": READ, "mail_mark_read": LIMITED_WRITE, "mail_draft": CONFIRM,
     # home and systems
     "home_states": READ, "home_control": LIMITED_WRITE, "home_check": READ,  # untrusted-content guard still applies
     "energy_coach": READ, "energy_device_usage": LIMITED_WRITE,   # the coach only advises; usage is a note
@@ -71,7 +71,7 @@ CLASSES = {
     "media_recent": READ, "media_search": READ, "media_play": LIMITED_WRITE,   # a film on the TV, nothing more
 }
 # Content written by others: wrapped as data, and taints the request.
-UNTRUSTED = {"web_fetch", "mail_inbox", "mail_events_scan", "shipments_status", "calendar_events", "file_read", "clipboard_read", "screen_read", "day_prep",
+UNTRUSTED = {"web_fetch", "mail_inbox", "mail_search","mail_events_scan", "shipments_status", "calendar_events", "file_read", "clipboard_read", "screen_read", "day_prep",
              "context_snapshot", "doc_search", "screen_describe",
              "homelab_report", "security_findings",   # device names in security findings come from DHCP
              "paperless_search", "paperless_read", "unifi_status", "media_recent", "media_search"}

@@ -1,0 +1,37 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Jarvis",
+        "description": "Jarvis on the PC answers what the voice satellite hears. Get the key on the phone at <Jarvis address>/pair.html?schluessel (code from the PC HUD under Devices).",
+        "data": {
+          "url": "Jarvis address",
+          "key": "Key",
+          "ip": "Tailscale IP of the PC (optional)"
+        },
+        "data_description": {
+          "url": "The tailscale serve address, e.g. https://my-pc.tailXXXX.ts.net",
+          "key": "Shown once on pair.html?schluessel. Lost or leaked: delete it under Devices in the HUD and get a new one.",
+          "ip": "Only needed when this machine cannot resolve the ts.net name (Tailscale with accept-dns off)."
+        }
+      },
+      "reconfigure": {
+        "title": "Jarvis",
+        "description": "Change the address or enter a new key.",
+        "data": {
+          "url": "Jarvis address",
+          "key": "Key",
+          "ip": "Tailscale IP of the PC (optional)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Jarvis is not reachable. Is the PC on and Jarvis running?",
+      "invalid_auth": "Jarvis refused the key."
+    },
+    "abort": {
+      "already_configured": "Jarvis is already set up.",
+      "reconfigure_successful": "Saved."
+    }
+  }
+}

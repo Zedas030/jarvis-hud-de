@@ -5,6 +5,9 @@ The HUD on the PC shows a six-digit code; the device types it on /pair.html
 and gets a long-lived random token as a cookie. Only a SHA-256 of the token is
 stored, in config/devices.json, so the file alone lets nobody in. Removing a
 device from the HUD (or from that file) locks it out at once.
+
+A pairing can also hand out a key for Home Assistant (kind "ask") instead of a cookie: it only
+opens /api/ask and /api/hear, never the HUD, so a key stored in Home Assistant cannot read the dashboard.
 """
 import hashlib
 import json
@@ -53,8 +56,8 @@ def pairing_open():
         return bool(_CODE["code"]) and time.time() < _CODE["until"]
 
 
-def pair(code, name):
-    """Right code -> token for the cookie (the code is used up). Wrong -> None."""
+def pair(code, name, kind="device"):
+    """Right code -> token for the cookie or the Home Assistant key (the code is used up). Wrong -> None."""
     code = "".join(ch for ch in str(code or "") if ch.isdigit())
     with _LOCK:
         if not _CODE["code"] or time.time() >= _CODE["until"]:
@@ -67,21 +70,24 @@ def pair(code, name):
         _CODE.update(code=None, until=0)
         token = secrets.token_urlsafe(32)
         data = _load()
-        data[secrets.token_hex(4)] = dict(name=(str(name or "").strip() or "Gerät")[:40], hash=_hash(token),
-                                          created=time.strftime("%Y-%m-%d %H:%M"), seen="")
+        entry = dict(name=(str(name or "").strip() or "Gerät")[:40], hash=_hash(token),
+                     created=time.strftime("%Y-%m-%d %H:%M"), seen="")
+        if kind != "device":
+            entry["kind"] = kind
+        data[secrets.token_hex(4)] = entry
         _save(data)
         return token
 
 
-def check(token):
-    """Device id for a valid token, else None. Notes when it was last seen."""
+def check(token, kind="device"):
+    """Device id for a valid token of that kind, else None. Notes when it was last seen."""
     if not token:
         return None
     h = _hash(token)
     with _LOCK:
         data = _load()
         for did, d in data.items():
-            if secrets.compare_digest(d.get("hash", ""), h):
+            if secrets.compare_digest(d.get("hash", ""), h) and d.get("kind", "device") == kind:
                 now = time.strftime("%Y-%m-%d %H:%M")
                 if d.get("seen") != now:
                     d["seen"] = now
@@ -91,7 +97,8 @@ def check(token):
 
 
 def listing():
-    return [dict(id=did, name=d.get("name", ""), created=d.get("created", ""), seen=d.get("seen", ""))
+    return [dict(id=did, name=d.get("name", ""), created=d.get("created", ""), seen=d.get("seen", ""),
+                 kind=d.get("kind", "device"))
             for did, d in _load().items()]
 
 

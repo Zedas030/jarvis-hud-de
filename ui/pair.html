@@ -38,19 +38,28 @@
   .tip{margin-top:26px;padding:12px 14px;border:1px solid rgba(255,179,64,.4);border-radius:10px;
     font-size:12px;line-height:1.5;color:var(--amber);text-align:left}
   .tip[hidden]{display:none}
+  .key[hidden]{display:none}
+  .key input{font-size:13px;text-align:left;letter-spacing:0}
+  .key p{margin:10px 0}
 </style>
 </head>
 <body>
 <main>
   <div class="core"></div>
   <h1>JARVIS</h1>
-  <p>Dieses Gerät ist noch nicht gekoppelt. Am PC auf <b>📱 Geräte</b> → <b>Neuen Code</b> tippen und den Code hier eingeben.</p>
+  <p id="lead">Dieses Gerät ist noch nicht gekoppelt. Am PC auf <b>📱 Geräte</b> → <b>Neuen Code</b> tippen und den Code hier eingeben.</p>
   <form id="f">
     <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="000 000" required>
     <input id="name" autocomplete="off" maxlength="40" placeholder="Name, z. B. iPhone">
     <button id="go">Koppeln</button>
   </form>
   <div class="msg" id="msg"></div>
+  <div class="key" id="key" hidden>
+    <p>Dein Schlüssel. Er wird <b>nur jetzt</b> angezeigt: kopieren und im Kurzbefehl bzw. in Home Assistant eintragen.</p>
+    <input id="keyVal" readonly>
+    <button id="copy" type="button">Kopieren</button>
+    <p>Verloren? Am PC unter <b>📱 Geräte</b> löschen und hier einen neuen holen.</p>
+  </div>
   <div class="tip" id="tip" hidden>
     Tipp fürs <span id="tipDev">iPhone</span>: Erst <span id="tipWhere">unten</span> auf <b>Teilen</b> → <b>Zum Home-Bildschirm</b>, dann Jarvis vom Home-Bildschirm
     öffnen und dort koppeln. Die App vom Home-Bildschirm hat ihre eigene Anmeldung, Safari zählt dafür nicht.
@@ -61,12 +70,19 @@
   'use strict';
   var ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   var standalone = window.navigator.standalone || matchMedia('(display-mode: standalone)').matches;
-  document.getElementById('tip').hidden = !(ios && !standalone);
+  // pair.html?schluessel: a key for Home Assistant instead of a cookie for this browser
+  var keyMode = /[?&](schluessel|key)/.test(location.search);
+  document.getElementById('tip').hidden = keyMode || !(ios && !standalone);
+  if (keyMode) {
+    document.getElementById('lead').innerHTML = 'Schlüssel für <b>Home Assistant</b> (Voice PE). Am PC auf <b>📱 Geräte</b> → '
+      + '<b>Neuen Code</b> tippen und den Code hier eingeben.';
+    document.getElementById('go').textContent = 'Schlüssel holen';
+  }
   // not "name": a top-level var of that name is window.name, a string
   var devName = document.getElementById('name');
   // iPadOS Safari calls itself a Mac — a touch screen that large is an iPad
   var ipad = /iPad/.test(navigator.userAgent) || (ios && screen.width >= 700);
-  devName.value = ipad ? 'iPad' : ios ? 'iPhone' : '';
+  devName.value = keyMode ? 'Home Assistant' : ipad ? 'iPad' : ios ? 'iPhone' : '';
   if (ipad) {   // on the iPad, Share sits top right in Safari's toolbar
     document.getElementById('tipDev').textContent = 'iPad';
     document.getElementById('tipWhere').textContent = 'oben rechts';
@@ -77,12 +93,25 @@
     btn.disabled = true; msg.textContent = '';
     try {
       var r = await fetch('/api/pair', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: document.getElementById('code').value, name: devName.value }) });
+        body: JSON.stringify({ code: document.getElementById('code').value, name: devName.value,
+                               purpose: keyMode ? 'ask' : undefined }) });
       var d = await r.json();
+      if (r.ok && d.ok && keyMode && d.key) {
+        document.getElementById('f').hidden = true;
+        document.getElementById('key').hidden = false;
+        document.getElementById('keyVal').value = d.key;
+        return;
+      }
       if (r.ok && d.ok) { location.replace('/'); return; }
       msg.textContent = d.error || 'Das hat nicht geklappt.';
     } catch (err) { msg.textContent = 'Jarvis nicht erreichbar. Läuft der PC?'; }
     btn.disabled = false;
+  });
+  document.getElementById('copy').addEventListener('click', async function () {
+    var v = document.getElementById('keyVal');
+    v.select();
+    try { await navigator.clipboard.writeText(v.value); this.textContent = 'Kopiert ✓'; }
+    catch (err) { document.execCommand('copy'); this.textContent = 'Kopiert ✓'; }
   });
 })();
 </script>

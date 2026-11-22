@@ -45,6 +45,7 @@ import voice_stt
 import voice_tts
 import voice_vad
 import voice_wake
+import wake_learn
 import jarvis_log
 
 log = jarvis_log.get(__name__)
@@ -138,6 +139,10 @@ class Session:
         self.preroll = bytearray()
         self.preroll_max = int(self.rate * 2 * e.preroll_ms / 1000)
         self.utt = bytearray()                  # the utterance being recorded
+        # the last seconds as they came in, in memory only: when a satellite in this room wakes up by mistake,
+        # this is the sound that set it off (wake_learn.py). Only the PC stands next to a satellite.
+        self.recent = bytearray()
+        self.recent_max = int(self.rate * 2 * wake_learn.RING_S) if device == "pc" and wake_learn.ENABLED else 0
         self.utt_gen = 0
         self.partial_text = None
         self.partial_gen = -1
@@ -169,6 +174,9 @@ class Session:
         self.play_index = 0                     # next sentence the player sends
         self.played = set()                     # ids the client finished
         self.playing_id = None                  # the id the client plays right now (from its reports)
+        self.playing_since = None               # when that sentence started to sound (clock)
+        self.playing_secs = 0.0                 # its length; for a room speaker as the speaker reported it
+        self.resume_progress = 0.0              # share of the interrupted sentence heard before the pause
         self.player_cond = threading.Condition(self.lock)
         self.paused = False
         self.ducked = False
@@ -252,6 +260,9 @@ class Session:
     def feed(self, frame):
         if not self.alive or self.muted or len(frame) < self.frame_bytes:
             return
+        if self.recent_max:
+            self.recent += frame
+            del self.recent[:-self.recent_max]
         frame = voice_dsp.denoise(frame)
         if self.room_speaker:
             frame = self.guard.cancel(frame)
@@ -539,6 +550,10 @@ class Session:
         self.machine.go(st.SPEAKING, "Meldung")
         self.player_cond.notify_all()
 
+    def busy(self):
+        """Thinking or speaking: what a satellite starting to listen stops (satellite_quiet.py)."""
+        return self.machine.state in (st.THINKING, st.SPEAKING, st.INTERRUPTED, st.RESUMING)
+
     def stop(self, why="Stopp-Knopf"):
         with self.lock:
             if self.machine.state in (st.SPEAKING, st.INTERRUPTED, st.RESUMING):
@@ -580,6 +595,8 @@ class Session:
         self.play_index = 0
         self.played = set()
         self.playing_id = None
+        self.playing_since = None
+        self.resume_progress = 0.0
         self.paused = False
         self.ducked = False
         self.answer_text = ""
@@ -658,6 +675,8 @@ class Session:
                 if run["speak"]:
                     for chunk in self.splitter.feed(self._speakable(run), final=False):
                         self._queue_sentence(chunk)
+        elif t == "quiet":                       # the server says: done, nothing to say (music started)
+            run["speak"] = False
         elif t == "confirm":
             self.pending_confirm = str(ev.get("id") or "")
         elif t == "confirm_done":
@@ -833,7 +852,7 @@ class Session:
                 import events
                 sonos.stop(eid)                   # clears a hold from an earlier pause
                 chunks = self._raw_chunks(s)
-                secs = sonos.say(eid, chunks, s.mime or "audio/mpeg", voice_tts.plain(s.text), quiet=events.quiet_now())
+                secs = sonos.say(eid, chunks, s.mime or "audio/mpeg", voice_tts.plain(s.text), quiet=events.sleeping())
                 threading.Thread(target=self._feed_reference, args=(s,), daemon=True).start()
         except Exception as e:  # noqa: BLE001 — the speaker failed: the device plays it itself
             self.log(f"Lautsprecher: {str(e)[:80]} — spreche selbst")
@@ -843,6 +862,10 @@ class Session:
                 self.play_index -= 1
             return
         self._emit("room_audio", id=s.id, seconds=secs, speaker=sonos.label(eid))
+        with self.lock:
+            if self.playing_id == s.id:
+                self.playing_since = self.clock()
+                self.playing_secs = float(secs or 0)
         end = self.clock() + float(secs or 0)
         while self.alive and self.clock() < end:
             with self.lock:
@@ -887,6 +910,8 @@ class Session:
         with self.lock:
             if t == "playing":
                 self.playing_id = ev.get("id")
+                self.playing_since = self.clock()
+                self.playing_secs = 0.0          # the client's sentence: its length comes from its PCM
             elif t == "ended":
                 self.played.add(ev.get("id"))
                 if ev.get("id") == self.playing_id:
@@ -939,6 +964,7 @@ class Session:
         self.paused_at = self.clock()
         self.barge_run_ms = 0
         self.resume_from = self._current_index()
+        self.resume_progress = self._heard_share(self.resume_from)
         self._emit("flush")
         self.turn.mark("output_paused")
         if self.output:
@@ -977,6 +1003,18 @@ class Session:
             if s.id == pid:
                 return i
         return max(0, min(self.play_index - 1, len(self.sentences) - 1))
+
+    def _heard_share(self, index):
+        """How much of sentence `index` had sounded when we paused (0..1), 0 when unknown."""
+        if not self.sentences or index >= len(self.sentences) or self.playing_since is None:
+            return 0.0
+        s = self.sentences[index]
+        if s.id != self.playing_id:
+            return 0.0
+        secs = self.playing_secs if self.output else len(s.pcm) / 2.0 / self.out_rate
+        if secs <= 0:
+            return 0.0
+        return max(0.0, min(1.0, (self.clock() - self.playing_since) / secs))
 
     def _interrupted_frame(self, frame, p):
         if self.clip is None:
@@ -1027,7 +1065,7 @@ class Session:
                 voice_metrics.event("echo_false_alarms")
                 voice_metrics.event("barge_ins", outcome="echo")
             elif norm in {_norm(w) for w in self.cfg.barge.backchannel} or re.fullmatch(r"(m+h*m*|h+m+|ä+h*m*)", norm):
-                self._resume(f"Rückmeldung „{text}“")
+                self._resume(f"Rückmeldung „{text}“", replay=True)       # he talked over it: say it again
                 voice_metrics.event("barge_ins", outcome="backchannel")
             elif _norm(rest) in {_norm(w) for w in self.cfg.barge.stop_words} or \
                     re.match(r"^(stopp?|halt)\b", _norm(rest)):
@@ -1046,7 +1084,7 @@ class Session:
                     self._emit("chime")
                     voice_metrics.event("barge_ins", outcome="name")
                 else:
-                    self._resume("zu kurz")
+                    self._resume("zu kurz", replay=True)
                     voice_metrics.event("barge_ins", outcome="noise")
             else:
                 self.log(f"gehört: „{text}“")
@@ -1071,17 +1109,30 @@ class Session:
             return f"Hinweis: Du wurdest nach Satz {n} von {total} deiner letzten Antwort unterbrochen; antworte auf das Neue."
         return ""
 
-    def _resume(self, why):
+    def _resume(self, why, replay=False):
+        """Goes on after a pause. The interrupted sentence plays again from its start, unless nobody spoke
+        (his own echo, a noise, the TV) and most of it had already sounded: then it counts as said and the
+        next one follows. Replaying it would make him hear the same answer twice (17.11.2026)."""
         self.machine.go(st.RESUMING, why)
         self.paused = False
         self.ducked = False
         self.clip = None
+        if not replay and self.resume_from < len(self.sentences) and \
+                self.resume_progress >= self.cfg.barge.resume_skip_ratio:
+            self.played.add(self.sentences[self.resume_from].id)
+            self.resume_from += 1
+            self.log("Satz war schon fast gesagt — weiter mit dem nächsten")
+        self.resume_progress = 0.0
         self.play_index = self.resume_from
         self.playing_id = None
+        self.playing_since = None
         self._emit("gain", value=1.0, ms=self.cfg.barge.fade_ms)
         self.log(f"weiter ({why})")
         if self.output:
             threading.Thread(target=self._room_resume, daemon=True).start()
+        if self.play_index >= len(self.sentences):
+            # nothing left to replay: SPEAKING lets the player end the turn (or wait for the next sentence)
+            self.machine.go(st.SPEAKING, "Satz war schon gesagt")
         self.player_cond.notify_all()
 
     def _room_resume(self):

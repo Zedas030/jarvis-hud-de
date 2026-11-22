@@ -79,11 +79,77 @@ class EchoOutput(unittest.TestCase):
         self.assertEqual(sent, [])
 
 
-    def test_hard_stop_ends_the_sentence_too(self):
-        sent = []
-        with prof(), mock.patch("jarvis_mcp._ha", side_effect=lambda path, body: sent.append((path, body))):
-            alexa_voice.stop(ECHO, hard=True)
-        self.assertEqual(sent, [("/api/services/media_player/media_stop", {"entity_id": "media_player.nutzer_echo_dot"})])
+    def _house(self, volume=0.48):
+        calls, vol = [], {"v": volume}
+
+        def ha(path, body=None):
+            calls.append((path, body))
+            if path.startswith("/api/states/"):
+                return {"state": "idle", "attributes": {"volume_level": vol["v"]}}
+            if path.endswith("/volume_set"):
+                vol["v"] = body["volume_level"]
+            return {}
+        return calls, vol, ha
+
+    def test_hard_stop_mutes_the_sentence_alexa_reads_and_turns_her_back_up(self):
+        # media_stop does not end text Alexa reads (18.11.2026): volume 0 until the block is over
+        calls, vol, ha = self._house()
+        mp = "media_player.nutzer_echo_dot"
+        with prof(), mock.patch("jarvis_mcp._ha", side_effect=ha):
+            alexa_voice._SAYING[ECHO] = 1000.0 + 2
+            alexa_voice.stop(ECHO, hard=True, now=1000.0)
+            self.assertEqual(vol["v"], 0)
+            self.assertIn(mp, alexa_voice._MUTED)
+            alexa_voice.unmute(mp)
+        self.assertEqual(vol["v"], 0.48)
+        self.assertNotIn(("/api/services/media_player/media_stop", {"entity_id": mp}), calls)
+
+    def test_hard_stop_with_nothing_sent_leaves_the_volume(self):
+        calls, vol, ha = self._house()
+        with prof(), mock.patch("jarvis_mcp._ha", side_effect=ha):
+            alexa_voice._SAYING[ECHO] = 1000.0 - alexa_voice.LATE_S - 1
+            alexa_voice.stop(ECHO, hard=True, now=1000.0)
+        self.assertEqual(calls, [])
+        self.assertEqual(vol["v"], 0.48)
+
+    def test_new_answer_after_a_cut_is_heard(self):
+        calls, vol, ha = self._house()
+        mp = "media_player.nutzer_echo_dot"
+        # daytime pinned: run during the quiet hours, say() would turn the Echo down to the night volume
+        with prof(), mock.patch("jarvis_mcp._ha", side_effect=ha), mock.patch.object(alexa_voice, "_quiet", return_value=False), \
+                mock.patch.object(alexa_voice, "CHARS_PER_S", 1000.0), mock.patch.object(alexa_voice, "LAG_S", 0.05):
+            alexa_voice.mute(mp, 30)
+            self.assertEqual(vol["v"], 0)
+            done = alexa_voice.say(ECHO, "Neue Antwort.")
+            self.assertEqual(vol["v"], 0.48)
+            time.sleep(done + 0.2)
+        self.assertNotIn(mp, alexa_voice._MUTED)
+
+    def test_echo_reporting_its_floor_is_still_muted(self):
+        # set to 0, the Echo reports 0.1 (18.11.2026): that is not a hand on the knob, the volume comes back
+        calls, vol, ha = self._house()
+        mp = "media_player.nutzer_echo_dot"
+        with prof(), mock.patch("jarvis_mcp._ha", side_effect=ha):
+            alexa_voice.mute(mp, 30)
+            vol["v"] = 0.1
+            alexa_voice.unmute(mp)
+        self.assertEqual(vol["v"], 0.48)
+
+    def test_turned_by_hand_while_muted_stays(self):
+        calls, vol, ha = self._house()
+        mp = "media_player.nutzer_echo_dot"
+        with prof(), mock.patch("jarvis_mcp._ha", side_effect=ha):
+            alexa_voice.mute(mp, 30)
+            vol["v"] = 0.3
+            alexa_voice.unmute(mp)
+        self.assertEqual(vol["v"], 0.3)
+
+    def tearDown(self):
+        for held in alexa_voice._MUTED.values():
+            held["timer"].cancel()
+        alexa_voice._MUTED.clear()
+        alexa_voice._SAYING.clear()
+        alexa_voice._BUSY.clear()
 
 
 class EchoAtNight(unittest.TestCase):
@@ -115,13 +181,87 @@ class EchoAtNight(unittest.TestCase):
         self.assertEqual(posts[-1][1], {"entity_id": "media_player.nutzer_echo_dot", "volume_level": 0.6})
 
     def test_day_and_already_quiet_leave_volume(self):
-        for quiet, v in ((False, 0.6), (True, 0.1)):
+        for quiet, v in ((False, 0.6), (True, 0.15)):
             posts = self.run_say(quiet, v)
             self.assertEqual([p for p, _ in posts], ["/api/services/notify/alexa_media_nutzer_echo_dot"])
 
     def test_turned_by_hand_stays(self):
         posts = self.run_say(True, 0.6, hand_turned=0.5)        # someone set 0.5 while Alexa spoke
         self.assertEqual(len([p for p, _ in posts if p.endswith("volume_set")]), 1)   # only the turn-down
+
+    def test_late_evening_speaks_at_the_late_volume_and_goes_back(self):
+        # Nutzer, 20.11.2026: 6 of 10 in the living room from 22 h, whatever the Echo stood at
+        with mock.patch.object(alexa_voice, "LATE_VOLUME", 0.6), mock.patch.object(alexa_voice, "_late", return_value=True):
+            posts = self.run_say(False, 0.3)
+        sets = [b["volume_level"] for p, b in posts if p.endswith("volume_set")]
+        self.assertEqual(sets, [0.6, 0.3])
+        with mock.patch.object(alexa_voice, "LATE_VOLUME", 0.6), mock.patch.object(alexa_voice, "_late", return_value=False):
+            posts = self.run_say(False, 0.3)
+        self.assertEqual([p for p, _ in posts if p.endswith("volume_set")], [])
+
+    def test_cut_off_while_turned_down_for_the_night_still_finds_the_way_back(self):
+        # 20.11.2026: night 0.2, then muted by a listening satellite; night_up saw 0 and gave up, the mute
+        # went back to 0.2 and the Echo stayed there
+        mp, vol = "media_player.nutzer_echo_dot", {"v": 0.5}
+
+        def ha(path, body=None):
+            if path.startswith("/api/states/"):
+                return {"state": "idle", "attributes": {"volume_level": 0.1 if vol["v"] == 0 else vol["v"]}}
+            if path.endswith("/volume_set"):
+                vol["v"] = body["volume_level"]
+            return None
+        with prof(), mock.patch("jarvis_mcp._ha", side_effect=ha), mock.patch.object(alexa_voice, "_quiet", return_value=True):
+            alexa_voice.night_down(ECHO, 30)
+            self.assertEqual(vol["v"], alexa_voice.NIGHT_VOLUME)
+            alexa_voice.mute(mp, 30)
+            self.assertEqual(vol["v"], 0)
+            alexa_voice.night_up(mp)
+            alexa_voice.unmute(mp)
+        self.assertEqual(vol["v"], 0.5)
+        self.assertEqual(alexa_voice._state()["held"], {})
+
+
+class EchoLeftQuiet(unittest.TestCase):
+    """19.11.2026: the Echo sat at 0.1 for a day after a lost way back from mute()."""
+
+    def setUp(self):
+        alexa_voice.STATE_FILE.unlink(missing_ok=True)
+        alexa_voice._MUTED.clear()
+        alexa_voice._NIGHT.clear()
+        self.vol = {"v": 0.1}
+        self.sets = []
+
+    def ha(self, path, body=None):
+        if path.startswith("/api/states/"):
+            return {"state": "idle", "attributes": {"volume_level": self.vol["v"]}}
+        if path.endswith("/volume_set"):
+            self.vol["v"] = body["volume_level"]
+            self.sets.append(body["volume_level"])
+        return None
+
+    def test_by_day_the_mute_level_gets_the_normal_volume_back(self):
+        alexa_voice._state(lambda d: d["good"].__setitem__("media_player.nutzer_echo_dot", 0.45))
+        with prof(), mock.patch("jarvis_mcp._ha", side_effect=self.ha), \
+                mock.patch.object(alexa_voice, "_quiet", return_value=False):
+            self.assertEqual(alexa_voice.heal("media_player.nutzer_echo_dot"), 0.45)
+            self.assertIsNone(alexa_voice.heal("media_player.nutzer_echo_dot"), "normal now: left alone")
+        self.assertEqual(self.sets, [0.45])
+
+    def test_no_normal_volume_known_yet(self):
+        with prof(), mock.patch("jarvis_mcp._ha", side_effect=self.ha):
+            self.assertEqual(alexa_voice.heal("media_player.nutzer_echo_dot"), alexa_voice.DAY_VOLUME)
+
+    def test_a_restart_during_mute_is_put_right(self):
+        self.vol["v"] = 0.5
+        with prof(), mock.patch("jarvis_mcp._ha", side_effect=self.ha), \
+                mock.patch.object(alexa_voice, "_quiet", return_value=False):
+            alexa_voice.mute("media_player.nutzer_echo_dot", 30)
+            self.assertEqual(self.vol["v"], 0)
+            alexa_voice._MUTED.pop("media_player.nutzer_echo_dot")["timer"].cancel()   # the process is gone
+            self.vol["v"] = 0.1                                                           # what the Echo reports
+            self.assertTrue(alexa_voice.recover())
+        self.assertEqual(self.vol["v"], 0.5)
+        self.assertEqual(alexa_voice._state()["held"], {})
 
 
 class Morning(unittest.TestCase):

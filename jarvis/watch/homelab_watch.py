@@ -50,10 +50,11 @@ CONFIRM = int(os.environ.get("JARVIS_HOMELAB_CONFIRM", "2"))
 MAX_PER_DAY = int(os.environ.get("JARVIS_HOMELAB_MAX_PER_DAY", "2"))
 ENABLED = os.environ.get("JARVIS_HOMELAB", "1").strip() not in ("0", "false", "no", "off")
 LEARN_SAMPLES = 7 * 24            # one week of hourly samples before outliers count
-LIMITS = {"pi_temp": 75, "pi_disk": 90, "pi_load": 4.0, "nas_temp": 60, "pc_gpu_temp": 85, "pc_disk": 92}
+# pi_load: 5-minute average on a Pi 4 (4 cores); planned jobs (Restore Probe 08:00, updates) reach ~5
+LIMITS = {"pi_temp": 75, "pi_disk": 90, "pi_load": 6.0, "nas_temp": 60, "pc_gpu_temp": 85, "pc_disk": 92}
 HISTORY = pathlib.Path(os.environ.get("JARVIS_HOMELAB_HISTORY", ROOT / "logs" / "homelab_events.jsonl"))
 # how far above normal an outlier must be (absolute), so 41 °C after a calm 38 °C stays quiet
-MIN_DELTA = {"pi_temp": 8, "pi_disk": 5, "pi_load": 1.0, "nas_temp": 6, "pc_gpu_temp": 10, "pc_disk": 5}
+MIN_DELTA = {"pi_temp": 8, "pi_disk": 5, "pi_load": 2.5, "nas_temp": 6, "pc_gpu_temp": 10, "pc_disk": 5}
 LABEL = {"pi_temp": ("die Temperatur des Pi", " Grad"), "pi_disk": ("die Belegung der Pi-Speicherkarte", " Prozent"),
          "pi_load": ("die Last auf dem Pi", ""), "nas_temp": ("die Temperatur des NAS", " Grad"),
          "pc_gpu_temp": ("die Grafikkarte", " Grad"), "pc_disk": ("die Belegung der Systemplatte", " Prozent"),
@@ -101,7 +102,10 @@ def check_ha():
 def parse_pi(out):
     """Fields from jarvis_mcp._pi_status() output."""
     grab = lambda pat: (m.group(1) if (m := re.search(pat, out)) else None)  # noqa: E731
-    return dict(temp=_num(grab(r"temp: ([\d.]+)")), load=_num(grab(r"load: ([\d.]+)")),
+    # load: the 5-minute average (second value); the 1-minute value jumps at every container start
+    # or the 08:00 Restore Probe run and is no sign of trouble on a 4-core Pi
+    load = grab(r"load: [\d.]+ ([\d.]+)") or grab(r"load: ([\d.]+)")
+    return dict(temp=_num(grab(r"temp: ([\d.]+)")), load=_num(load),
                 disk=_num(grab(r"disk: .*\((\d+)%\)")),
                 services=re.findall(r"dienst (\S+): (\S+)", out),
                 containers=re.findall(r"container (\S+): (.*)", out))
@@ -224,6 +228,19 @@ def value_findings(metrics, limits, now=None):
 
 # ── incidents → messages ─────────────────────────────────────
 
+# Keys where "bad" really means something is gone (unreachable, stopped, offline). Everything else
+# (values, forecasts, Kuma checks, backups) is a finding, not an outage: on 17.11.2026 a short load
+# peak was announced as "der 6. Ausfall in 7 Tagen" although the Pi had been up for two days.
+_OUTAGE_KEYS = ("ha", "pi", "nas")
+_OUTAGE_PREFIXES = ("device:", "pi_service:", "pi_container:", "energy:binary_sensor.")
+
+
+def recurring_note(key, n):
+    if key in _OUTAGE_KEYS or key.startswith(_OUTAGE_PREFIXES):
+        return f" Das ist der {n}. Ausfall in 7 Tagen — wiederkehrend."
+    return f" Das ist das {n}. Mal in 7 Tagen, aber kein Ausfall."
+
+
 class Msg(str):
     """A message text that knows its severity (for the phone push)."""
     severity = "warn"
@@ -287,7 +304,7 @@ def process(findings, now=None, quiet=None):
                     import monitoring
                     n = monitoring.recurring(f["key"], now)
                     if n >= 3:
-                        text += f" Das ist der {n}. Ausfall in 7 Tagen — wiederkehrend."
+                        text += recurring_note(f["key"], n)
                 except Exception:  # noqa: BLE001
                     pass
                 out.append(_msg(text, f["severity"]))

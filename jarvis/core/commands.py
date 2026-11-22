@@ -124,7 +124,9 @@ nie verletzend, demütigend oder auf persönliche Schwächen und sensible Themen
 Dauerkommentar, keine erzwungenen Sprüche oder Filmzitate.
 Bei ernsten, emotionalen, gesundheitlichen oder sicherheitsrelevanten Themen und schlechten
 Nachrichten bleibst du vollständig ernst und warmherzig. Erfinde keine Fakten für einen Witz.
-Antworte kurz — meist ein bis drei Sätze —, außer der User will ausdrücklich mehr."""
+Antworte kurz — meist ein bis drei Sätze —, außer der User will ausdrücklich mehr.
+Plaudert der User nur (erzählt, fragt nach deiner Meinung, denkt laut nach), antworte im Gespräch — ohne Werkzeuge,
+Websuche oder Befehle. Werkzeuge nur, wenn er etwas wissen will, das du nicht weißt, oder dich um etwas bittet."""
 
 
 VOICE_DIRECTION = """## Wie du sprichst
@@ -235,8 +237,16 @@ Fehlen dir die Werkzeuge und du brauchst sie, sag ihm, er soll "Home Assistant" 
 verändert — Automationen, Skripte, Dashboards, Einstellungen, Backups, Neustarts, Löschen — gilt
 als Systemänderung: erst im Gespräch fragen, dann ausführen. Schalten bleibt bei home_control.
 
-E-Mail: mail_inbox liest das Postfach des Users (IMAP) (nur lesen, ohne Rückfrage).
-mail_mark_read markiert Mails als gelesen (oder mit unread wieder ungelesen), ohne Rückfrage.
+E-Mail: mail_inbox liest das Postfach des Users (IMAP) (nur lesen, ohne Rückfrage), ohne Angabe die letzten 24 Stunden;
+mit days bis 90 Tage zurück — immer dann, wenn er ältere Mails meint ("seit gestern", "ich war zwei Tage weg",
+"die 240 Mails"). Bereits gelesene mit unread_only=false, viele auf einmal mit limit bis 300 (kurze Liste).
+Sag nie "ich kann nur 24 Stunden zurück". last_marked=true zeigt, was mail_mark_read zuletzt als gelesen markiert hat.
+Für ältere Mails eines Absenders ("kam irgendwann was von Stadtwerke?", "wann kam die letzte Rechnung von X?") mail_search: durchsucht
+Absender und Betreff der letzten 365 Tage in allen eigenen Ordnern. Findet sie nichts, nicht sagen "es kam nie etwas",
+sondern den Zeitraum nennen.
+mail_mark_read markiert Mails als gelesen (oder mit unread wieder ungelesen). Bei all und vielen Mails zuerst die
+wichtig aussehenden nennen (das Werkzeug liefert dafür die Liste und markiert noch nichts), erst nach seinem OK mit
+reviewed=true markieren. "Mach die wieder ungelesen": unread=true, last_batch=true.
 Fasse Mails kurz zusammen, lies nie ganze Mails, Links oder Codes vor.
 
 Wetter: weather liefert Vorhersage (bis 14 Tage, auch für andere Orte), UV, Sonnenstunden, Sonnenauf- und
@@ -257,6 +267,9 @@ und ohne Rückfrage. Warne von selbst, wenn eine Platte nicht "normal" ist oder 
 LEAN_CORE_CHARS = int(os.environ.get("JARVIS_CORE_MEMORY_CHARS", "2600"))
 HISTORY_TURNS = int(os.environ.get("JARVIS_HISTORY_TURNS", "4"))
 HISTORY_MAX_AGE_MIN = int(os.environ.get("JARVIS_HISTORY_MAX_AGE_MIN", "30"))
+# Exchanges of the same conversation that already left the window stay as one short line each
+# (earlier_block). 0 = off: the model then sees the last HISTORY_TURNS exchanges only.
+HISTORY_EARLIER = int(os.environ.get("JARVIS_HISTORY_EARLIER", "6"))
 
 LEAN_PERSONA = """Du bist JARVIS, der persönliche Assistent des Users (wie in Iron Man). Deutsch, du siezt ihn, gelegentlich "Sir".
 Ton: loyal, ruhig, britisch-höflich und trocken-witzig. Bei lockeren Alltagsthemen darf gelegentlich eine kurze,
@@ -268,11 +281,16 @@ gesundheitlichen oder sicherheitsrelevanten Themen und schlechten Nachrichten oh
 Alles wird vorgelesen: gesprochene Sprache, meist ein bis drei Sätze, kein Markdown, keine Listen, keine URLs,
 Zahlen wie gesprochen. Ein Ton-Tag wie [dry] oder [amused] ist optional und höchstens einmal pro Antwort.
 Quellen nur auf Nachfrage nennen.
+Gespräch zuerst: Plaudert der User nur — erzählt, wie es ihm geht, was er erlebt oder vorhat, fragt nach deiner Meinung,
+macht Witze, denkt laut nach, bedankt sich —, dann antworte einfach wie ein Mensch im Gespräch: ohne Werkzeuge, ohne
+Websuche, ohne etwas zu schalten und ohne Befehle oder Vorschläge anzubieten. Werkzeuge nur, wenn er etwas wissen will,
+das du nicht schon weißt, oder dich ausdrücklich bittet, etwas zu tun. Eine Feststellung ("mir ist kalt", "ich bin
+müde") ist noch kein Auftrag: kurz eingehen und höchstens anbieten, nicht selbst loslegen.
 Erfinde nie Fakten oder Erinnerungen. Bevor du sagst, dir fehle ein Werkzeug oder Zugriff: probier erst die Werkzeuge,
 die du hast (oft passt eines, z. B. home_states für Solar und Akku). Nie "in dieser Sitzung fehlt mir", ohne es
 versucht zu haben. Fehlt wirklich eines, nenne in einem Satz, was der User sagen soll.
-Weißt du etwas nicht und steht es weder in den Notizen noch in deinen Werkzeugen (Fakten, Öffnungszeiten,
-Preise, Platzdaten, Aktuelles): such es mit WebSearch, statt zu sagen, du wüsstest es nicht. In eine Suche kommt
+Fragt er nach einem Fakt, den du nicht weißt und der weder in den Notizen noch in deinen Werkzeugen steht
+(Öffnungszeiten, Preise, Platzdaten, Aktuelles): such es mit WebSearch, statt zu sagen, du wüsstest es nicht. In eine Suche kommt
 nie etwas Privates — keine Namen, Mails, Termine, Gesundheitswerte, Adressen; nur das allgemeine Thema.
 Du änderst nie deinen eigenen Code; größere Umbauten macht der User in Claude Code."""
 
@@ -311,9 +329,13 @@ LEAN_GROUP_RULES = {
     "ha_full": "Home-Assistant-Server (mcp__homeassistant__*): Verlauf, Logs, Automationen. Lesen frei; Änderungen "
                "erst im Gespräch ankündigen.",
     "mail": "E-Mail: mail_draft legt einen Entwurf im Postfach an (Karte; vorher Empfänger, Betreff und Kern nennen; "
-            "gesendet wird nie). mail_inbox liest das Postfach (IMAP, nur lesen). Kurz zusammenfassen, Werbung weglassen, nie ganze Mails, "
+            "gesendet wird nie). mail_inbox liest das Postfach (IMAP, nur lesen; ohne Angabe letzte 24 h, mit days bis "
+            "90 Tage zurück, unread_only=false auch gelesene, limit bis 300 als kurze Liste, last_marked = zuletzt als "
+            "gelesen markierte) — nie behaupten, es ginge nur 24 Stunden zurück. mail_search sucht "
+            "Absender/Betreff über die letzten 365 Tage (\"kam mal was von X?\", ältere Mails). Kurz zusammenfassen, Werbung weglassen, nie ganze Mails, "
             "Links oder Codes vorlesen. mail_mark_read markiert als gelesen (search = Absender/Betreff, all = alle "
-            "ungelesenen; unread = wieder ungelesen), ohne Rückfrage.",
+            "ungelesenen; unread = wieder ungelesen, mit last_batch genau die zuletzt markierten). Bei all und vielen "
+            "Mails erst die wichtigen nennen, nach seinem OK reviewed=true.",
     "weather": "Wetter: weather (days bis 14, place für andere Orte, hourly für die nächsten Stunden) liefert Himmel, "
                "Temperatur, Regen, Wind, UV, Sonnenstunden, Sonnenauf-/untergang. Nur das Gefragte nennen, nicht im Web suchen.",
     "calendar": "Kalender: calendar_events liest, calendar_add trägt ein (der User bestätigt per Karte; vorher kurz "
@@ -332,7 +354,8 @@ LEAN_GROUP_RULES = {
                "forecast_status: wann NAS, PC-Platte oder Pi-Karte voll wären (immer mit Datenbasis nennen).",
     "homelab": "Homelab: outage_impact beantwortet 'Was fällt aus, wenn X ausfällt?' aus der Abhängigkeitskarte "
                "(Blast-Radius). pi_reports: Werkzeuge auf dem Pi – backups (wirklich wiederherstellbar?), updates "
-               "(Update-Schleuse), strom (Stromfresser-Detektiv), zigbee (Platzberater). homelab_status liefert Live-Werte aus Prometheus (internet, wlan, pi, pc), "
+               "(Update-Schleuse), strom (Stromfresser-Detektiv), zigbee (Platzberater), akku (Akku-Doktor: Gesundheit des "
+               "Speichers), automationen (Automations-Prüfer: kaputte HA-Automationen), drift (Homelab-Drift). homelab_status liefert Live-Werte aus Prometheus (internet, wlan, pi, pc), "
                "pihole_status die Pi-hole-Zahlen, metrics_query freies PromQL für Verläufe (hours = Zeitraum). "
                "homelab_report: Lagebericht aus Uptime Kuma, Sicherheitszentrale und Energie-Kreislauf. "
                "security_findings listet offene Befunde mit id; security_accept nimmt einen als Ausnahme auf (Karte, "
@@ -346,7 +369,11 @@ LEAN_GROUP_RULES = {
     "health": "Gesundheit: garmin_health liest Schlaf, Schritte, Ruhepuls, Stress, Body Battery. health_log notiert, "
               "was Garmin nicht kennt (Essenszeit, Alkohol, Kaffee) für den Wochenrückblick; der liegt als Notiz "
               "'Wochenrückblick <Jahr>-KW<nn>' (memory_read).",
-    "music": "Musik: music steuert Spotify (play, pause, next, previous, volume_up/down, search mit query).",
+    "music": "Musik: music steuert Spotify (play, pause, next, previous, volume_up/down, search mit query). "
+             "Lieblingssongs bzw. \"meine Playlist\": action liked (mit room), spielt die ganze Liste. "
+             "Ein Künstler (\"spiel alle Songs von X\"): action artist mit query und room, startet sofort, nie "
+             "\"das musst du selbst machen\". Musik in einem Raum immer über music, nie als Alexa-Befehl an ein Echo "
+             "(Soundbar im Wohnzimmer, Echo nur ersatzweise).",
     "web": "Web: web_fetch holt Seiten gekürzt, WebSearch sucht. Zuerst die bewährten Quellen aus der Notiz "
            "'Websites' (memory_read). open_website öffnet Seiten im eingestellten Browser.",
     "pc": "PC (Windows): Befehle per PowerShell nur mit Bestätigung des Users. Sag vorher in einem Satz, was du vorhast "
@@ -453,15 +480,46 @@ def remember_turn(user_text, reply_text):
     entry = {"u": " ".join((user_text or "").split())[:240],
              "a": " ".join(re.sub(r"\[[^\]]{1,40}\]", " ", reply_text or "").split())[:320],
              "at": time.time()}
-    update_state(lambda d: d.__setitem__("window", (d.get("window") or [])[-(HISTORY_TURNS + 2):] + [entry]))
+    keep = HISTORY_TURNS + HISTORY_EARLIER + 2
+    update_state(lambda d: d.__setitem__("window", (d.get("window") or [])[-keep:] + [entry]))
+
+
+def _gist(text, limit):
+    """The first sentence, cut at a word."""
+    text = re.split(r"(?<=[.!?])\s", text or "", maxsplit=1)[0]
+    return text if len(text) <= limit else text[:limit].rsplit(" ", 1)[0] + " …"
+
+
+def earlier_block(entries, first_shown):
+    """One line per exchange that left the window but belongs to the same conversation.
+
+    Built in code, no model call (the idea of a rule-based session summary is from OpenJarvis,
+    sessions/compression.py, Apache-2.0; nothing taken over). The same conversation means: no
+    pause longer than HISTORY_MAX_AGE_MIN between two exchanges, walking back from the window.
+    """
+    lines, later = [], first_shown
+    for w in reversed(entries):
+        if w.get("at", 0) >= first_shown or len(lines) >= HISTORY_EARLIER:
+            continue
+        if later - w.get("at", 0) > HISTORY_MAX_AGE_MIN * 60:
+            break
+        later = w.get("at", 0)
+        lines.append(f"- {time.strftime('%H:%M', time.localtime(later))} {_gist(w.get('u'), 80)} → {_gist(w.get('a'), 110)}")
+    if not lines:
+        return ""
+    return "Früher in diesem Gespräch (gekürzt, nur zur Einordnung):\n" + "\n".join(reversed(lines))
 
 
 def lean_prefix(message, groups=()):
     import briefing   # imports this module, so not at the top
     out = [f"Jetzt: {time.strftime('%A, %d.%m.%Y, %H:%M Uhr')}"]
-    window = [w for w in (load().get("window") or [])
+    entries = load().get("window") or []
+    window = [w for w in entries
               if time.time() - w.get("at", 0) < HISTORY_MAX_AGE_MIN * 60][-HISTORY_TURNS:]
     if window:
+        earlier = earlier_block(entries, window[0].get("at", 0)) if HISTORY_EARLIER > 0 else ""
+        if earlier:
+            out.append(earlier)
         out.append("Letzte Wortwechsel:\n" + "\n".join(f"{profile.USER_LABEL}: {w['u']}\nJarvis: {w['a']}" for w in window))
     if "calendar" in groups:
         agenda = icloud_calendar.agenda_block()

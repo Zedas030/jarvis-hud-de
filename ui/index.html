@@ -269,7 +269,7 @@
 <div class="pairbox" id="pairBox" hidden>
   <section class="panel">
     <h2>Geräte <em>Fernzugriff</em></h2>
-    <p class="hint">Auf dem iPhone oder iPad die Jarvis-Adresse öffnen und diesen Code eingeben.</p>
+    <p class="hint">Auf dem iPhone oder iPad die Jarvis-Adresse öffnen und diesen Code eingeben. Schlüssel für Home Assistant 🔑: dort <b>/pair.html?schluessel</b> öffnen.</p>
     <div class="paircode" id="pairCode">······</div>
     <div class="pairhint" id="pairHint"></div>
     <div class="pairbtns"><button id="pairNew">Neuen Code</button><button id="pairClose">Schließen</button></div>
@@ -295,6 +295,24 @@
   document.querySelectorAll('a.monitor-link,a.docs-link').forEach(function(a){
     a.href=a.href.replace('//10.0.0.110:','//raspi'+m[1]+':');
   });
+})();
+</script>
+<script>
+// A start where not every script arrived (iPad over Tailscale, back from the background) showed the
+// bare HUD with a layout menu that did nothing until the app was restarted by hand. tablet.js marks a
+// finished start with body[data-layout]; without it after 15 s the page loads again by itself —
+// at most 3 times in 5 minutes, so a real outage does not turn into a reload loop (17.11.2026).
+(function(){
+  setTimeout(function(){
+    if(document.body&&document.body.dataset.layout)return;
+    try{
+      var k='jarvis.bootRetry',now=Date.now();
+      var r=JSON.parse(sessionStorage.getItem(k)||'[]').filter(function(t){return now-t<300000;});
+      if(r.length>=3)return;
+      r.push(now);sessionStorage.setItem(k,JSON.stringify(r));
+    }catch(e){}
+    location.reload();
+  },15000);
 })();
 </script>
 <script src="tabguard.js"></script>

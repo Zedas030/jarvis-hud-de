@@ -22,7 +22,7 @@ Die Datei wird bei jeder Änderung neu gelesen, ein Neustart ist nicht nötig.
 | Heimkommen | `person.*` ist nach mindestens 20 min Abwesenheit wieder `home` | Briefing, sobald ein Präsenzmelder den Raum kennt (spätestens nach 3 min am Standardlautsprecher) |
 | Morgens | erstes Betreten des Bads nach der Nacht (5–11 Uhr), einmal am Tag | Wetter, Warnungen, Termine, Pakete, Sonne, was nachts war. Zählt als Tagesbriefing |
 | Sofort | jede Runde (30 s) | Kritisches und Wichtiges aus HA: Wasser/Rauch, NOAH-Differenz, Steckdose offline, DWD-Warnungen |
-| Gute Nacht | „Jarvis, gute Nacht“ | hängt an deine Routine „Gute Nacht“ an: Geräte noch an, offene Fenster, früher Termin morgen |
+| Gute Nacht | „Jarvis, gute Nacht“ | hängt an deine Routine „Gute Nacht“ an: Geräte noch an, offene Fenster, früher Termin morgen. Bei Nutzer seit 20.11.2026 aus (`evening.enabled: false`): nach „Gute Nacht“ kein Abendgebet mehr |
 
 Das Briefing dauert höchstens 25 Sekunden (etwa 60 Wörter); was nicht mehr passt, steht nur auf dem iPad.
 Claude (Haiku, ohne Werkzeuge) formuliert es; antwortet das Modell nicht innerhalb von 25 s, spricht Jarvis

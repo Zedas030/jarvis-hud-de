@@ -54,7 +54,7 @@ Alle Einstellungen stehen kommentiert in [`.env.example`](../.env.example). Pers
 | Bereich | Variablen | Zweck |
 |---|---|---|
 | Profil | `JARVIS_USER_NAME`, `JARVIS_PLACE`, `JARVIS_WEATHER_LAT/LON`, `JARVIS_TIMEZONE`, `JARVIS_BROWSER` | Anrede, Ort, Browser |
-| Gehirn | `JARVIS_LEAN`, `JARVIS_LOCAL_ROUTER`, `JARVIS_MODEL_SIMPLE/SMART`, `JARVIS_EFFORT`, `JARVIS_MAX_OUTPUT_TOKENS`, `JARVIS_HISTORY_TURNS` | Router, Modellwahl, Kontextgröße |
+| Gehirn | `JARVIS_LEAN`, `JARVIS_LOCAL_ROUTER`, `JARVIS_MODEL_SIMPLE/SMART`, `JARVIS_EFFORT`, `JARVIS_MAX_OUTPUT_TOKENS`, `JARVIS_HISTORY_TURNS`, `JARVIS_HISTORY_EARLIER` | Router, Modellwahl, Kontextgröße |
 | Stimme | `TTS_CHAIN`, `TTS_ANNOUNCE_SWITCH`, `FISH_AUDIO_*`, `ELEVENLABS_*`, `AZURE_*`, `GOOGLE_TTS_*`, `EDGE_*`, `LOCAL_TTS_URL` | Anbieter-Reihenfolge und Zugänge |
 | Hören | `JARVIS_STT`, `WHISPER_LOCAL_*` | Spracherkennung |
 | Aktivierungswort | `JARVIS_WAKE` (`off`/`text`/`oww`), `JARVIS_WAKE_*`, `JARVIS_FOLLOWUP_S` | „Jarvis …“ statt Dauer-Mikrofon. Ohne „Jarvis“ wird nichts bearbeitet oder protokolliert; `JARVIS_FOLLOWUP_S` > 0 erlaubt kurz Folgefragen ohne „Jarvis“ (Standard: aus) |
@@ -76,6 +76,13 @@ Alle Einstellungen stehen kommentiert in [`.env.example`](../.env.example). Pers
 ## Entwicklung und Diagnose
 
 ```powershell
+# Doktor: Python, Pakete, .env, Konfiguration, Claude CLI, Stimmen, laufender Server, Home Assistant
+# (liest nur, ändert nichts; Exit-Code 1 bei einem Fehler, --json für Maschinen)
+.venv\Scripts\python.exe scripts\doctor.py
+
+# Datenflüsse: welche Dienste außer Haus bekommen in dieser Installation Daten? (--write erneuert docs/datenfluesse.md)
+.venv\Scripts\python.exe scripts\data_flows.py
+
 # Tests: Router, Timer, Listen, Routinen (Home Assistant wird simuliert, nichts wird geschaltet)
 .venv\Scripts\python.exe -m unittest discover -s tests -v
 

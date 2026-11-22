@@ -64,6 +64,9 @@ GROUP_RULES = [
              r"ventilator|szene|wohnzimmer|schlafzimmer|gaming|küche|boiler|smart ?home|home ?assistant|"
              r"solar|akku|speicher|strom|watt|überschuss|energie-?coach|sensor|luft|feucht|echo|fire ?tv|fernseher|tv\b)"),
     ("mail", r"\b(mail|e-mail|postfach|posteingang|newsletter|nachricht von|geschrieben|gelesen)"),
+    # "kam irgendwann was von Stadtwerke?" — no word for mail in it, but it means the mailbox
+    ("mail", r"\b(kam|kommt|gekommen|bekommen|erhalten)\b.{0,30}\b(was|etwas|post|rechnung|schreiben|brief)\b.{0,15}\bvon\b"),
+    ("mail", r"\b(irgendwann|jemals|schon mal|schonmal)\b.{0,15}\b(was|etwas|post|rechnung|schreiben|brief)\s+von\b"),
     ("calendar", r"\b(termin|kalender|eintragen|trag\w* .*ein|erinner|verabredung|meeting|wann (ist|habe))"),
     # "Was steht heute noch an?" got memory only, and Jarvis said he could not see the calendar
     ("calendar", r"\b(was steht .{0,25}\ban\b|(hab|habe) ich .{0,25}\b(vor|geplant|frei|zeit)\b|vorhaben|"
@@ -341,6 +344,16 @@ MUSIC = [
 ]
 
 
+class _Quiet(str):
+    """A reply that is shown and logged but not spoken: "Die Musik läuft jetzt im Wohnzimmer" is
+    what he hears anyway (17.11.2026: "Ich höre die Musik, das muss sie mir nicht nochmal sagen").
+    Failures stay plain strings, so they are still said."""
+
+
+def _quiet_if_done(text, *ok_starts):
+    return _Quiet(text) if text and text.startswith(ok_starts) else text
+
+
 def _music_target(n):
     """The room the music should go to, when a speaker room is named: "Musik vom Schlafzimmer ins Wohnzimmer",
     "mach die Musik aufm Schlafzimmer im Wohnzimmer an". The room after "vom / aus dem / aufm / auf dem" is
@@ -365,28 +378,92 @@ def _music_target(n):
     return targets[0] if targets else found[-1][1]
 
 
+def _liked(n):
+    """'Spiel meine Lieblingssongs im Wohnzimmer': the whole liked list. Before 16.11.2026 the room word made it
+    a transfer of whatever played — a Sonos stream as one single track, over after the first song."""
+    # Whisper hears "Lieblingssons", "Lieblingsongs", "Lieblings-Songs" (19.11.2026: missed, so Claude sent an
+    # Alexa command to the Echo instead of the soundbar)
+    if not re.search(r"\b(liebling[ -]?s?[ -]?(songs?|sons?|sounds?|lieder|titel|musik|playlist)"
+                     r"|gespeicherten? (songs|lieder|titel)"
+                     r"|meine playlist(?! \w+ (von|mit)\b))", n):
+        return None
+    if _has(n, "warum", "wieso", "weshalb", "welche", "was\\b", "wie viele", "hinzu", "füg", "speicher", "lösch",
+            "entfern", "merk"):
+        return None                               # a question about the list, or changing it: Claude
+    if not re.search(r"\b(spiel\w*|spiegl\w*|abspiel\w*|hör\w*|start\w*|leg\w*|mach\w*|an|ab|auf)\b", n):
+        return None
+    import jarvis_mcp
+    try:
+        text = jarvis_mcp._music({"action": "liked", "room": _music_target(n) or ""})
+    except Exception:  # noqa: BLE001
+        return None
+    return _quiet_if_done(text, "Ihre Lieblingssongs laufen")
+
+
+_ARTIST = re.compile(
+    r"^ (?:(?:bitte|jarvis|hey|okay|ok|kannst du|könntest du)\s)*(?:spiel\w*|leg\w*|mach\w*|hör\w*|start\w*)"
+    r"(?:\s(?:mal|bitte|mir|uns|doch|jetzt))*"
+    r"\s(?:(?:alle|ein paar|paar|die|ein|einen|eine|irgendwas|irgendwelche|was|etwas|mehr)\s)*"
+    r"(?:songs?|lieder|musik|titel|tracks?|sachen|hits|zeug)\s(?:von|vom künstler|von der band|der band)"
+    r"\s(?P<artist>.+?)"
+    r"(?:\s(?:im|in der|ins|auf der|auf dem|aufm)\s(?P<room>[\wäöüß]+))?"
+    r"(?:\s(?:an|ab|bitte|auf spotify|über spotify))* $")
+
+
+def _artist(n):
+    """"Spiel alle Songs von Linkin Park im Wohnzimmer": the artist on the room's speaker. Before 19.11.2026
+    Jarvis only opened Spotify's search and told him to start it himself."""
+    m = _ARTIST.match(n)
+    if not m or _has(n, "warum", "wieso", "weshalb", "welche", "wie viele"):
+        return None
+    import speakers
+    try:
+        rooms = {r.lower(): r for r in speakers.rooms()}
+    except Exception:  # noqa: BLE001
+        rooms = {}
+    artist, room = m.group("artist").strip(), (m.group("room") or "").strip()
+    if artist in rooms or artist.split()[0] in ("dem", "der", "meinem", "meiner", "hier"):
+        return None                               # "Musik von Schlafzimmer ins …", "Lieder von der Liste": Claude
+    if room and room not in rooms:
+        return None                               # "im Auto", "in der Küche" without a speaker: Claude decides
+    import jarvis_mcp
+    try:
+        text = jarvis_mcp._music({"action": "artist", "query": artist, "room": rooms.get(room, "")})
+    except Exception:  # noqa: BLE001
+        return None
+    # what he hears needs no announcement; a stand-in speaker ("„Wohnzimmer“ ist … nicht erreichbar") or a miss is said
+    return _Quiet(text) if text and " läuft jetzt" in text and not text.startswith("„") else text
+
+
 def _music(n):
     if not _has(n, "musik", "spotify", "song", "lied", "titel", "track") and not re.search(
             r"\b(lauter|leiser)\b", n) or _has(n, "jarvis.*(lauter|leiser)", "stimme", "sprich"):
         return None
     if _has(n, "such", "spiel .* von", "spiele .* von", "playlist", "album"):
         return None                               # searching needs the LLM to pick the query
-    target = _music_target(n)
+    # "Warum war die Musik gerade im Schlafzimmer? Guck mal nach." moved the music into the bedroom
+    # (16.11.2026): a question about the music is for Claude and never moves or switches it.
+    # "Kannst du die Musik leiser machen?" is still a request.
+    if _has(n, "warum", "wieso", "weshalb") or (QUESTION.search(n) and not _has(n, "(kannst|könntest|würdest) du")):
+        return None
+    # "Wohnzimmer, lauter" moved the music into the living room instead of turning it up (17.11.2026):
+    # with lauter/leiser the room only says where it plays, it is no move.
+    target = None if re.search(r"\b(lauter|leiser)\b", n) else _music_target(n)
     if target:
         import jarvis_mcp
         try:
             text = jarvis_mcp._music({"action": "transfer", "room": target})
         except Exception:  # noqa: BLE001
             return None
-        return f"{text[:-1]}, {_sir()}." if _sir() and text.endswith(".") else text
+        return _quiet_if_done(text, "Die Musik läuft jetzt", "Die Musik läuft schon")
     for pat, action, text in MUSIC:
         if re.search(pat, n):
             import jarvis_mcp
             try:
-                jarvis_mcp._music({"action": action})
+                result = jarvis_mcp._music({"action": action})
             except Exception:  # noqa: BLE001
                 return None
-            return f"{text}, {_sir()}." if _sir() else f"{text}."
+            return _quiet_if_done(f"{text}.", f"{text}.") if str(result).startswith("Erledigt") else result
     return None
 
 
@@ -477,21 +554,47 @@ def _match_devices(n, hint=None, devs=None, prefer=None):
     return best
 
 
+# "Seit wann ist das Licht an?", "Wie lange läuft der Ventilator schon?" — the time comes from ha_since.
+_SINCE = re.compile(r"\b(seit wann|seit wie viel\w*|wie lange?|wann (ist|sind|wurde|wurden|ging|gingen|hat|haben))\b")
+_SINCE_END = re.compile(r"\b(an|aus|ein|eingeschaltet|ausgeschaltet|angeschaltet|angemacht|ausgemacht|angegangen|"
+                        r"ausgegangen|aktiv|läuft|laufen)\s*$")
+
+
 def _home_state(n):
-    """'Ist der Luftreiniger an?' — answered from Home Assistant, nothing is switched."""
-    if not (QUESTION.search(n) and re.search(r"\b(an|aus|ein|eingeschaltet|ausgeschaltet|läuft|laufen)\s*$", n.strip())):
+    """'Ist der Luftreiniger an?' — answered from Home Assistant, nothing is switched.
+    'Seit wann ist das Licht an?' adds when that state began (17.11.2026: he only heard "LED ist an")."""
+    since = bool(_SINCE.search(n))
+    if since:
+        if not _SINCE_END.search(n.strip()):
+            return None
+    elif not (QUESTION.search(n) and re.search(r"\b(an|aus|ein|eingeschaltet|ausgeschaltet|läuft|laufen)\s*$", n.strip())):
         return None
+    if _has(n, "warum", "wieso", "weshalb", "musik\\b", "spotify\\b"):
+        return None                                # a why or a music question, not a switch state: Claude
     hint = next((d for w, d in _DOMAIN_WORDS.items() if re.search(r"\b" + w, n)), None)
     try:
         best = _match_devices(n, hint)
         if not best or len(best) > 3:
             return None
         import briefing
-        states = {s["entity_id"]: s["state"] for s in briefing._ha_states()}
+        states = {s["entity_id"]: s for s in briefing._ha_states()}
     except Exception:  # noqa: BLE001
         return None
     word = {"on": "an", "off": "aus", "playing": "an", "idle": "aus"}
-    parts = [f"{d['name']} ist {word.get(states.get(d['eid']), states.get(d['eid'], 'unbekannt'))}" for d in best]
+    parts = []
+    for d in best:
+        s = states.get(d["eid"]) or {}
+        state = s.get("state")
+        told = ""
+        if since and state:
+            try:
+                import ha_since
+                told = ha_since.phrase(d["eid"], state, s.get("last_changed"))
+            except Exception:  # noqa: BLE001 — the state alone is still an answer
+                told = ""
+        parts.append(f"{d['name']} ist {told or word.get(state, state or 'unbekannt')}")
+    if since and len(parts) == 1 and "seit" not in parts[0] and "gerade eben" not in parts[0]:
+        parts[0] += ", seit wann sehe ich gerade nicht"
     return " und ".join(parts) + f", {_sir()}."
 
 
@@ -684,6 +787,14 @@ def _home(n, room=None, force=None):
         best = [by_eid.get(e) or {"eid": e, "dom": e.split(".")[0], "name": e.split(".", 1)[1].replace("_", " "),
                                   "words": set()} for e in learned]
         hint = hint or best[0]["dom"]
+    if scope and scope["sure"] and hint == "light" and not re.search(r"\balle\b", n) \
+            and _generic(n, devs) and not any(d["eid"] in prefer for d in best):
+        # "Licht an" in the bedroom is the bedroom's lamp, even when its name ("Hue Schlafzimmer")
+        # has no "Licht" in it; before, only the living-room LED (alias "Licht", and a learned
+        # "licht an" -> light.licht) matched and Jarvis offered the living room (17.11.2026).
+        here = [d for d in devs if d["dom"] == "light" and d["eid"] in prefer]
+        if here:
+            best = here
     lights = [d for d in devs if d["dom"] == "light"]
     if not best and hint == "light" and re.search(r"\balle\b", n) and lights and not pct:
         best = lights                              # "mach alle Lichter aus"
@@ -896,9 +1007,14 @@ def _routine(n):
 GOOD_NIGHT = re.compile(r"^\s*(jarvis )?gute nacht( jarvis)?\s*$")
 
 
+def _good_night(n):
+    import routines
+    return bool(GOOD_NIGHT.match(n)) or routines.loose(n, "gute nacht")   # misheard: "Ciao, was ist gute Nacht"
+
+
 def _proactive(n):
     import proactive
-    if GOOD_NIGHT.match(n) and proactive.owns("evening"):
+    if _good_night(n) and proactive.owns("evening"):
         import routines
         if not routines.find(_raw()):
             return proactive.evening()             # no routine of that name: the check alone
@@ -962,6 +1078,15 @@ PI_REPORTS = (
                          r"(steckdosen?|geräte?) .{0,20}(keine werte|auffällig))")),
     ("zigbee", re.compile(r"\b(platzberater|zigbee[ -]?(router|netz|empfang|verbindung|kanal|signal)|"
                           r"wo (soll|sollte|kann) .{0,40}zigbee|zigbee .{0,30}(stabil|schwach|gut))")),
+    ("akku", re.compile(r"\b(akku[ -]?doktor|(wie )?(gesund|fit) (ist|sind) (der |die |mein\w* )?(akku|speicher|batterie)\w*|"
+                        r"(akku|speicher|batterie)\w* .{0,30}(gesundheit|gesund|verschlei\w*|soh\b|(rest)?kapazität|"
+                        r"vollzyklen|zyklen|garantie)|(gesundheit|kapazität|verschlei\w*) .{0,20}(akkus?|speichers?|batterie))")),
+    ("automationen", re.compile(r"\b(automations?[ -]?pr(ü|ue)fer|(kaputte|fehlerhafte|defekte) (automationen|automatisierungen)|"
+                                r"(sind|gibt es|habe ich|hab ich) .{0,25}(automationen|automatisierungen) .{0,25}"
+                                r"(kaputt|fehler\w*|defekt|probleme?|konflikt\w*|schleifen?)|"
+                                r"(laufen|funktionieren) (alle |meine |die )?(automationen|automatisierungen))")),
+    ("drift", re.compile(r"\b(homelab[ -]?drift|drift|(hat sich|was hat sich|wurde) .{0,30}(im (heim)?netz|auf dem pi|im homelab|"
+                         r"an der fritzbox) .{0,20}(verändert|geändert))")),
     ("alles", re.compile(r"\b(homelab[ -]?werkzeuge|pi[ -]?werkzeuge|was sagen (die )?werkzeuge|werkzeuge auf dem pi)")),
 )
 
@@ -980,6 +1105,15 @@ def _report(n):
         return None
     import learning
     return learning.spoken_report(7)
+
+
+def _data_flows(n):
+    if not re.search(r"\b(welche|was für) daten\b.{0,40}\b(cloud|internet|außer haus|nach außen|nach draußen|raus)\b|"
+                     r"\b(wohin|wo) gehen (meine|die|unsere) daten\b|\bwer bekommt (meine|welche|die) daten\b|"
+                     r"\bdatenfl[uü]ss\w*|\bwas (geht|schickst du|sendest du) (alles )?(in|an) die cloud\b", n):
+        return None
+    import data_flows
+    return data_flows.spoken()
 
 
 _SHIFT = r"(spülmaschine|geschirrspüler|waschmaschine|trockner|boiler|drucker|druck|wäsche)"
@@ -1082,6 +1216,28 @@ def _emergency(n):
 
 EMERGENCY_HOOKS = {}     # the server sets deny (open cards) and cancel (running Claude process)
 
+# "Jarvis, stopp" over a satellite went to Claude (19.11.2026), cost a call and could bring a new
+# answer. The whole utterance must be the stop word: "Stopp die Musik" or "Timer stoppen" stay with
+# their handlers, "Stopp alles" is the emergency stop above.
+STOP_TALK = re.compile(r"^ (?:(?:jarvis|ok|okay|hey|bitte|danke|ja|nein|so|also|na) )*"
+                       r"(?:stopp?|halt(?: stopp?)?|hör (?:auf|mal auf)|aufhören|sei (?:still|ruhig|leise)|"
+                       r"ruhe|psst|pst|klappe|abbrechen|genug|schon gut|das reicht|reicht)"
+                       r"(?: (?:jarvis|bitte|danke|jetzt|schon|sofort|mal))* $")
+
+
+def _stop_talk(n):
+    """'Stopp' / 'Hör auf' / 'Sei still' alone: whatever Jarvis is saying anywhere ends, nothing is said."""
+    if not STOP_TALK.match(n):
+        return None
+    import satellite_quiet
+    stopped = satellite_quiet.hush("Stopp")
+    return _Quiet("Gestoppt." if stopped else "Ich war schon still.")
+
+
+def _wake_false(n):
+    import wake_learn
+    return wake_learn.handle(n)
+
 
 def _personality(n):
     import personality
@@ -1174,9 +1330,9 @@ def _habits(n):
     return user_habits.handle(n)
 
 
-LOCAL_HANDLERS = [_emergency, _proactive, _choice, _room_answer, _personality, _focus, _daytime, _tomorrow, _context, _tasks, _desktop, _routine, _timers, _memory_weekly, _extras, _lists, _pronounce,
-                  _outage, _pi_reports, _report, _selfcheck, _habits, _episodes, _wellbeing, _maintenance, _situation, _coach, _costs, _announce, _tv, _alerts,
-                  _unifi, _media, _pc, _commute, _parcels, _printer, _followup, _home_state, _climate, _home,
+LOCAL_HANDLERS = [_emergency, _proactive, _choice, _stop_talk, _wake_false, _room_answer, _personality, _focus, _daytime, _tomorrow, _context, _tasks, _desktop, _routine, _timers, _memory_weekly, _extras, _lists, _pronounce,
+                  _outage, _pi_reports, _report, _data_flows, _selfcheck, _habits, _episodes, _wellbeing, _maintenance, _situation, _coach, _costs, _announce, _tv, _alerts,
+                  _unifi, _media, _pc, _commute, _parcels, _printer, _followup, _liked, _artist, _home_state, _climate, _home,
                   _music, _time, _date, _sun, _weather, _solar, _nas, _pi]
 
 
@@ -1192,8 +1348,9 @@ def _local(text, handlers):
             except Exception:  # noqa: BLE001
                 reply = None
             if reply:
+                quiet = isinstance(reply, _Quiet)
                 reply = re.sub(r",\s*\.", ".", reply).replace(" ,", ",").replace("  ", " ")
-                return reply, h.__name__.strip("_")
+                return (_Quiet(reply) if quiet else reply), h.__name__.strip("_")
     finally:
         _RAW.text = saved
     return None, None
@@ -1224,7 +1381,7 @@ def route(message, ha_full=False):
     if LOCAL_ENABLED and text and len(text) < 160 and not text.startswith("/"):
         reply, handler = _local(text, LOCAL_HANDLERS)
         if reply:
-            return {"kind": "local", "reply": reply, "handler": handler}
+            return {"kind": "local", "reply": str(reply), "handler": handler, "silent": isinstance(reply, _Quiet)}
     r = llm_route(text, ha_full)
     own = [g for g in r["groups"] if g != "memory"]
     age = time.time() - _LAST["at"]

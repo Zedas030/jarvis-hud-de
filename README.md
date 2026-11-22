@@ -126,7 +126,7 @@ Jarvis meldet sich von selbst – ausgelöst durch Ereignisse, nicht durch feste
   Abwesenheit passiert ist.
 - **Morgens:** beim ersten Betreten des Bads nach der Nacht (Wetter, Warnungen, Termine, Pakete).
 - **Sofort:** Wasser, Rauch, Unwetter, auseinanderlaufende NOAH-Akkus, ein Gerät offline.
-- **„Jarvis, gute Nacht“:** Geräte noch an, offene Fenster, früher Termin morgen.
+- **„Jarvis, gute Nacht“:** Geräte noch an, offene Fenster, früher Termin morgen (abschaltbar mit `evening.enabled: false`).
 
 Jede Meldung ist *kritisch*, *wichtig* oder *nett zu wissen*. Ein Briefing ist höchstens 25 Sekunden lang, den
 Rest zeigt das iPad. Schon Gesagtes wiederholt er erst, wenn sich etwas ändert; „Jarvis, mehr dazu“ liefert

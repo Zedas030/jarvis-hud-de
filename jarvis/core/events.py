@@ -59,6 +59,50 @@ def quiet_now(now=None):
     return start <= hour < end if start < end else hour >= start or hour < end
 
 
+# How loud Jarvis speaks (Sonos/Echo night volume, whispering) follows the user's "Gute Nacht", not the
+# clock: at 0:30 he was still awake and the Sonos at its night volume was far too quiet (17.11.2026).
+# JARVIS_SLEEP_ENTITY is a Home Assistant on/off entity that is on from "Gute Nacht" until the morning
+# (here input_boolean.jarvis_gute_nacht). Empty, or HA not answering: the quiet hours as before.
+SLEEP_ENTITY = os.environ.get("JARVIS_SLEEP_ENTITY", "").strip()
+SLEEP_TTL_S = 15
+_SLEEP = {"at": 0.0, "state": None}
+
+
+def _sleep_state():
+    """'on' / 'off' of SLEEP_ENTITY, None when unknown."""
+    if time.time() - _SLEEP["at"] < SLEEP_TTL_S:
+        return _SLEEP["state"]
+    state = None
+    try:
+        import ha_events
+        for s in ha_events.states() or []:
+            if s.get("entity_id") == SLEEP_ENTITY:
+                state = s.get("state")
+                break
+        if state is None:
+            import urllib.request
+            url = os.environ.get("HA_URL", "").strip().rstrip("/") + "/api/states/" + SLEEP_ENTITY
+            req = urllib.request.Request(url, headers={"Authorization": "Bearer " + os.environ.get("HA_TOKEN", "").strip()})
+            with urllib.request.urlopen(req, timeout=4) as r:
+                state = (json.loads(r.read() or b"{}") or {}).get("state")
+    except Exception:  # noqa: BLE001 — unknown: the clock decides
+        state = None
+    state = state if state in ("on", "off") else None
+    _SLEEP.update(at=time.time(), state=state)
+    return state
+
+
+def sleeping(now=None):
+    """True when Jarvis should speak softly: after "Gute Nacht" (SLEEP_ENTITY on). Without that entity,
+    or when Home Assistant does not know it, the quiet hours decide (quiet_now). An explicit `now`
+    (tests, previews) always asks the clock."""
+    if SLEEP_ENTITY and now is None:
+        state = _sleep_state()
+        if state is not None:
+            return state == "on"
+    return quiet_now(now)
+
+
 def publish(etype, text="", priority="normal", **extra):
     """etype: say | alarm | wake | timers. Extra fields (kind, items, ...) travel along."""
     if etype == "say" and priority != "alarm":

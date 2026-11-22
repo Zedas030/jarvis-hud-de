@@ -80,6 +80,23 @@ class Recurring(unittest.TestCase):
         self.assertNotIn("wiederkehrend", out[0])
         self.assertIn("Das ist der 3. Ausfall in 7 Tagen — wiederkehrend.", out[2])
 
+    def test_value_peak_is_no_outage(self):
+        f = dict(key="value:pi_load", ok=False, severity="warn", down="Die Last auf dem Pi liegt bei 6,3.",
+                 up="Die Last ist wieder normal.")
+        now = time.time() - 3 * 86400
+        out = []
+        for i in range(3):
+            t = now + i * 86400
+            hw.process([f], now=t, quiet=False)
+            out += hw.process([f], now=t + 300, quiet=False)
+            hw.process([dict(f, ok=True)], now=t + 600, quiet=False)
+        self.assertNotIn("wiederkehrend", out[2])
+        self.assertIn("Das ist das 3. Mal in 7 Tagen, aber kein Ausfall.", out[2])
+
+    def test_pi_load_uses_five_minute_average(self):
+        self.assertEqual(hw.parse_pi("load: 6.30 2.10 1.20")["load"], 2.1)
+        self.assertEqual(hw.parse_pi("load: 0.5")["load"], 0.5)
+
 
 class Notices(unittest.TestCase):
     def setUp(self):

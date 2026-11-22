@@ -18,6 +18,8 @@ Kinds and what accepting does:
               sets thermostats to the away temperature
   restart     a Docker container on the Pi whose Uptime Kuma monitor is down (kuma_alerts.py) ->
               `docker restart <container>`, only containers listed in config/homelab.json → kuma_restart
+  wake_sensitivity  a satellite that woke up by mistake several times (wake_learn.py) -> its wake word
+              sensitivity in Home Assistant one step down
   habit       a question the user asks at the same time of day (user_habits.py) -> a job that says
               the answer by itself or fetches it into the cache beforehand
 
@@ -35,7 +37,7 @@ import time
 ROOT = pathlib.Path(__file__).resolve().parents[2]      # the repository (this file: jarvis/<group>/)
 PATH = pathlib.Path(os.environ.get("JARVIS_PROPOSALS", ROOT / "logs" / "proposals.json"))
 DAYS = int(os.environ.get("JARVIS_PROPOSAL_DAYS", "7"))
-KINDS = ("rules", "routine", "reminder", "idea", "skill", "calendar", "switch_off", "habit", "restart")
+KINDS = ("rules", "routine", "reminder", "idea", "skill", "calendar", "switch_off", "habit", "restart", "wake_sensitivity")
 _LOCK = threading.Lock()
 
 
@@ -125,6 +127,11 @@ def describe(p):
     if p["kind"] == "restart":
         return (f"Auf dem Pi den Container {pl.get('container', '?')} neu starten (docker restart). "
                 f"Grund: Uptime Kuma meldet {pl.get('monitor', '?')} als ausgefallen.")
+    if p["kind"] == "wake_sensitivity":
+        import wake_learn
+        return (f"Aktivierungswort am Satelliten {pl.get('room', '?')} unempfindlicher stellen: von "
+                f"{wake_learn.LEVEL_DE.get(pl.get('from'), '?')} auf {wake_learn.LEVEL_DE.get(pl.get('option'), '?')}. "
+                "Löst seltener falsch aus, überhört „Jarvis“ aus der Ferne eher.")
     if p["kind"] == "skill":
         import learning
         import skill_factory
@@ -189,6 +196,9 @@ def accept(pid, internal=None):
     elif p["kind"] == "restart":
         import kuma_alerts
         result = kuma_alerts.restart(pl.get("container"))
+    elif p["kind"] == "wake_sensitivity":
+        import wake_learn
+        result = wake_learn.apply(pl)
     else:
         result = "Vorgemerkt."
     resolve(pid, "accepted")

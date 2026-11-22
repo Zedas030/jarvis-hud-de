@@ -149,3 +149,124 @@ class SonosStream(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Liked(unittest.TestCase):
+    def setUp(self):
+        self.patches = [prof(), mock.patch.object(spotify, "configured", return_value=True),
+                        mock.patch.object(jarvis_mcp, "_speaker_stream", return_value=None),
+                        mock.patch.object(spotify, "devices", return_value=[{"id": "d1", "name": "Wohnzimmer"}])]
+        for p in self.patches:
+            p.start()
+        spotify._USER["id"] = ""
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+        spotify._USER["id"] = ""
+
+    def test_liked_songs_as_context_on_the_room_speaker(self):
+        with mock.patch.object(spotify, "_api", return_value=(200, {"id": "u1"})), \
+                mock.patch.object(spotify, "play_context", return_value=True) as play:
+            self.assertEqual(jarvis_mcp._music({"action": "liked", "room": "Wohnzimmer"}),
+                             "Ihre Lieblingssongs laufen jetzt im Wohnzimmer.")
+        play.assert_called_once_with("spotify:user:u1:collection", "d1")
+
+    def test_room_speaker_missing(self):
+        with mock.patch.object(spotify, "play_context") as play:
+            text = jarvis_mcp._music({"action": "liked", "room": "Schlafzimmer"})
+        self.assertIn("nicht erreichbar", text)
+        play.assert_not_called()
+
+
+class LikedSoundbarFirst(unittest.TestCase):
+    """19.11.2026: the liked songs in the Wohnzimmer belong on the soundbar; the Echo only when it stays away."""
+    def setUp(self):
+        self.patches = [prof(), mock.patch.object(spotify, "configured", return_value=True),
+                        mock.patch.object(jarvis_mcp, "_speaker_stream", return_value=None),
+                        mock.patch.object(jarvis_mcp.time, "sleep"), mock.patch.object(jarvis_mcp, "MUSIC_ROOM_TRIES", 3)]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+
+    def test_soundbar_back_on_the_second_look(self):
+        echo = {"id": "e1", "name": "Nutzer' Echo Dot"}
+        looks = iter([[echo], [echo, {"id": "s1", "name": "Wohnzimmer"}]])
+        with mock.patch.object(spotify, "devices", side_effect=lambda: next(looks)), \
+                mock.patch.object(spotify, "play_liked", return_value=True) as play:
+            self.assertEqual(jarvis_mcp._music({"action": "liked", "room": "Wohnzimmer"}),
+                             "Ihre Lieblingssongs laufen jetzt im Wohnzimmer.")
+        play.assert_called_once_with("s1")
+
+    def test_echo_only_when_the_soundbar_stays_away(self):
+        with mock.patch.object(spotify, "devices", return_value=[{"id": "e1", "name": "Nutzer' Echo Dot"}]) as devs, \
+                mock.patch.object(spotify, "play_liked", return_value=True) as play:
+            text = jarvis_mcp._music({"action": "liked", "room": "Wohnzimmer"})
+        play.assert_called_once_with("e1")
+        self.assertEqual(devs.call_count, 3)
+        self.assertIn("ersatzweise auf „Nutzer' Echo Dot“", text)
+
+
+class NoAlexaMusic(unittest.TestCase):
+    """19.11.2026: Claude sent "spiele meine Lieblingssongs auf Spotify" to the Echo as an Alexa command.
+    (tests.test_router swaps jarvis_mcp._home for a fake at import, so the check is tested on its own.)"""
+    def setUp(self):
+        self.p = mock.patch("jarvis_profile.ha", side_effect=lambda k, d=None: dict(PROF, tv="media_player.fire_tv").get(k, d))
+        self.p.start()
+
+    def tearDown(self):
+        self.p.stop()
+
+    def test_music_command_to_the_echo_is_refused(self):
+        for data in ({"media_content_type": "custom", "media_content_id": "spiele meine Lieblingssongs auf Spotify"},
+                     '{"media_content_type": "custom", "media_content_id": "spiel Musik"}'):
+            text = jarvis_mcp._alexa_music_refused("media_player.nutzer_echo_dot", "play_media", data)
+            self.assertTrue(text.startswith("Abgelehnt"), text)
+            self.assertIn("music", text)
+
+    def test_other_commands_and_the_tv_still_go(self):
+        r = jarvis_mcp._alexa_music_refused
+        self.assertEqual(r("media_player.nutzer_echo_dot", "play_media",
+                           {"media_content_type": "custom", "media_content_id": "wie spät ist es"}), "")
+        self.assertEqual(r("media_player.fire_tv", "play_media",
+                           {"media_content_type": "custom", "media_content_id": "öffne spotify"}), "")
+        self.assertEqual(r("media_player.nutzer_echo_dot", "play_media",
+                           {"media_content_type": "music", "media_content_id": "spotify:playlist:x"}), "")
+        self.assertEqual(r("light.wohnzimmer", "turn_on", {}), "")
+
+
+class Artist(unittest.TestCase):
+    """19.11.2026: "Spiel alle Songs von X" — Jarvis said he could not and Nutzer had to do it himself."""
+    def setUp(self):
+        self.patches = [prof(), mock.patch.object(spotify, "configured", return_value=True),
+                        mock.patch.object(jarvis_mcp, "_speaker_stream", return_value=None),
+                        mock.patch.object(jarvis_mcp.time, "sleep"), mock.patch.object(jarvis_mcp, "MUSIC_ROOM_TRIES", 3)]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+
+    def test_artist_as_context_on_the_soundbar(self):
+        found = {"artists": {"items": [{"uri": "spotify:artist:a1", "name": "Linkin Park"},
+                                       {"uri": "spotify:artist:a2", "name": "Linkin Park Tribute"}]}}
+        with mock.patch.object(spotify, "devices", return_value=[{"id": "s1", "name": "Wohnzimmer"},
+                                                                 {"id": "e1", "name": "Nutzer' Echo Dot"}]), \
+                mock.patch.object(spotify, "_api", return_value=(200, found)) as api, \
+                mock.patch.object(spotify, "play_context", return_value=True) as play:
+            text = jarvis_mcp._music({"action": "artist", "query": "linkin park", "room": "Wohnzimmer"})
+        self.assertEqual(text, "Linkin Park läuft jetzt im Wohnzimmer.")
+        play.assert_called_once_with("spotify:artist:a1", "s1")
+        self.assertIn("type=artist", api.call_args[0][1])
+
+    def test_unknown_artist_or_none_given(self):
+        with mock.patch.object(spotify, "devices", return_value=[{"id": "s1", "name": "Wohnzimmer"}]), \
+                mock.patch.object(spotify, "_api", return_value=(200, {"artists": {"items": []}})), \
+                mock.patch.object(spotify, "play_context") as play:
+            self.assertIn("nicht gefunden", jarvis_mcp._music({"action": "artist", "query": "xyzzy", "room": "Wohnzimmer"}))
+            self.assertEqual(jarvis_mcp._music({"action": "artist", "query": " "}), "Welchen Künstler soll ich spielen?")
+        play.assert_not_called()

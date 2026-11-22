@@ -1,5 +1,6 @@
 import isolate  # noqa: F401 — first: temp state, no house
 
+import datetime as dt
 import json
 import os
 import struct
@@ -78,7 +79,8 @@ class Duration(unittest.TestCase):
 class Play(unittest.TestCase):
     def test_announces_through_home_assistant_and_serves_the_clip_once_named(self):
         calls = []
-        with mock.patch.object(sonos, "_ha", side_effect=lambda path, body: calls.append((path, body))):
+        with mock.patch.object(sonos, "_ha", side_effect=lambda path, body: calls.append((path, body))), \
+                mock.patch.object(sonos, "_late", return_value=False):
             secs = sonos.play("media_player.schlafzimmer", _mp3(3.0), "audio/mpeg", "Hallo")
         path, body = calls[0]
         self.assertEqual(path, "/api/services/media_player/play_media")
@@ -100,6 +102,21 @@ class Play(unittest.TestCase):
         with mock.patch.object(sonos, "_ha", side_effect=lambda path, body: calls.append(body)):
             sonos.play("media_player.schlafzimmer", _mp3(1.0), "audio/mpeg", quiet=True)
         self.assertEqual(calls[0]["extra"]["volume"], round(sonos.NIGHT_VOLUME * 100))
+
+    def test_softer_from_ten_in_the_evening(self):
+        # 19.11.2026: at 23:27, before "Gute Nacht", the day volume was far too loud in the bedroom
+        day, late, night = dt.datetime(2026, 11, 19, 21, 59), dt.datetime(2026, 11, 19, 22, 0), dt.datetime(2026, 11, 20, 6, 30)
+        with mock.patch.object(sonos, "VOLUME", 0.63), mock.patch.object(sonos, "LATE_VOLUME", 0.35), \
+                mock.patch.object(sonos, "NIGHT_VOLUME", 0.1), mock.patch.object(sonos, "LATE_FROM", 22):
+            self.assertEqual(sonos.voice_volume(now=day), 0.63)
+            self.assertEqual(sonos.voice_volume(now=late), 0.35)
+            self.assertEqual(sonos.voice_volume(now=night), 0.35)
+            self.assertEqual(sonos.voice_volume(quiet=True, now=late), 0.1)          # after "Gute Nacht"
+            self.assertEqual(sonos.voice_volume(now=dt.datetime(2026, 11, 20, 7)), 0.63)
+            with mock.patch.object(sonos, "LATE_VOLUME", 0.9):
+                self.assertEqual(sonos.voice_volume(now=late), 0.63)                  # never louder than the day
+            with mock.patch.object(sonos, "LATE_VOLUME", 0):
+                self.assertEqual(sonos.voice_volume(now=late), 0.63)                  # 0 = off
 
     def test_volume_as_percent(self):
         self.assertEqual((sonos._percent(0.35), sonos._percent(40), sonos._percent(0.0), sonos._percent(3)),

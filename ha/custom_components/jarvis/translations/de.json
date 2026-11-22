@@ -1,0 +1,37 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Jarvis",
+        "description": "Jarvis auf dem PC beantwortet, was der Sprach-Satellit hört. Den Schlüssel holst du auf dem Handy unter <Jarvis-Adresse>/pair.html?schluessel (Code am PC im HUD unter 📱 Geräte).",
+        "data": {
+          "url": "Jarvis-Adresse",
+          "key": "Schlüssel",
+          "ip": "Tailscale-IP des PCs (optional)"
+        },
+        "data_description": {
+          "url": "Die Adresse von tailscale serve, z. B. https://mein-pc.tailXXXX.ts.net",
+          "key": "Wird auf pair.html?schluessel einmal angezeigt. Verloren oder weitergegeben: im HUD unter 📱 Geräte löschen und einen neuen holen.",
+          "ip": "Nur nötig, wenn dieses Gerät den ts.net-Namen nicht auflösen kann (Tailscale mit accept-dns aus)."
+        }
+      },
+      "reconfigure": {
+        "title": "Jarvis",
+        "description": "Adresse ändern oder einen neuen Schlüssel eintragen.",
+        "data": {
+          "url": "Jarvis-Adresse",
+          "key": "Schlüssel",
+          "ip": "Tailscale-IP des PCs (optional)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Jarvis ist nicht erreichbar. Läuft der PC mit Jarvis?",
+      "invalid_auth": "Jarvis lehnt den Schlüssel ab."
+    },
+    "abort": {
+      "already_configured": "Jarvis ist schon eingerichtet.",
+      "reconfigure_successful": "Gespeichert."
+    }
+  }
+}

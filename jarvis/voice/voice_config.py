@@ -37,7 +37,7 @@ DEFAULTS = {
              "conversation_with_ambience": False, "drop_foreign": True, "echo_window_s": 60.0,
              "max_glue": 2, "max_glue_with_ambience": 1, "pc_audio": True},
     "barge": {"duck_ms": 60, "duck_gain": 0.2, "confirm_ms": 150, "fade_ms": 30, "clip_silence_ms": 500,
-              "clip_max_ms": 8000, "resume_after_ms": 1500,
+              "clip_max_ms": 8000, "resume_after_ms": 1500, "resume_skip_ratio": 0.6,
               "backchannel": ["mhm", "mh", "hm", "hmm", "ja", "ja ja", "jo", "genau", "okay", "ok", "aha",
                               "ach so", "alles klar", "verstehe", "gut", "stimmt", "richtig", "klar", "oh",
                               "ah", "äh", "ähm"],

@@ -5,6 +5,9 @@ Pi reports — reads the status of the homelab tools on the Pi; read-only, 0 tok
     updates   Update-Schleuse (:8100/status.json): container updates waiting, held back or failed
     strom     Stromfresser-Detektiv (:8101/api/status): open findings on the power plugs
     zigbee    Zigbee-Platzberater (:8099/api/state): router recommendation and channel check
+    akku      Akku-Doktor (:8104/api/status): health of the home battery (usable kWh, SOH, cycles, warranty)
+    automationen  Automations-Prüfer (:8102/api/report): broken, looping or conflicting HA automations
+    drift     Homelab-Drift (:8097/metrics, Prometheus text): changes on the hosts, scan health
 
     report(topic)      (severity, German sentence); severity "ok", "attention" or "unknown"
     spoken(topic)      the sentence for the voice output ("alles" = every tool in one go)
@@ -13,7 +16,8 @@ Pi reports — reads the status of the homelab tools on the Pi; read-only, 0 tok
 
 The tools are still growing, so every reader only relies on a few fields and treats anything else as
 optional. URLs: JARVIS_RESTORE_PROBE_URL, JARVIS_UPDATE_AIRLOCK_URL, JARVIS_STROMFRESSER_URL,
-JARVIS_ZIGBEE_ADVISOR_URL in .env; default http://<JARVIS_PI_HOST>:<port>/<path>.
+JARVIS_ZIGBEE_ADVISOR_URL, JARVIS_AKKU_DOKTOR_URL, JARVIS_AUTOMATIONS_PRUEFER_URL, JARVIS_HOMELAB_DRIFT_URL
+in .env; default http://<JARVIS_PI_HOST>:<port>/<path>.
 """
 import json
 import os
@@ -37,8 +41,32 @@ SOURCES = {
     "updates": ("Update-Schleuse", _url("JARVIS_UPDATE_AIRLOCK_URL", 8100, "/status.json")),
     "strom": ("Stromfresser-Detektiv", _url("JARVIS_STROMFRESSER_URL", 8101, "/api/status")),
     "zigbee": ("Zigbee-Platzberater", _url("JARVIS_ZIGBEE_ADVISOR_URL", 8099, "/api/state")),
+    "akku": ("Akku-Doktor", _url("JARVIS_AKKU_DOKTOR_URL", 8104, "/api/status")),
+    "automationen": ("Automations-Prüfer", _url("JARVIS_AUTOMATIONS_PRUEFER_URL", 8102, "/api/report")),
+    "drift": ("Homelab-Drift", _url("JARVIS_HOMELAB_DRIFT_URL", 8097, "/metrics")),
 }
+_PROM = {"drift"}            # Homelab-Drift only writes HTML pages and its /metrics; no JSON of its own
+PRUEFER_STALE_H = 3          # the Prüfer checks every few minutes; hours without a check means it hangs
+DRIFT_STALE_H = 2            # Drift scans every 15 min
 _CACHE = {}
+
+
+def _prom(text):
+    """Prometheus text format -> {(name, ((label, value), ...)): float}. Enough for counters and gauges."""
+    out = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        head, _, value = line.rpartition(" ")
+        name, _, labels = head.partition("{")
+        pairs = tuple(sorted((k.strip(), v.strip().strip('"'))
+                             for k, _, v in (p.partition("=") for p in labels.rstrip("}").split(",") if "=" in p)))
+        try:
+            out[(name, pairs)] = float(value)
+        except ValueError:
+            continue
+    return out
 
 
 def fetch(topic):
@@ -49,7 +77,8 @@ def fetch(topic):
     if hit and time.time() - hit[0] < CACHE_S:
         return hit[1]
     with urllib.request.urlopen(url, timeout=TIMEOUT) as r:
-        data = json.loads(r.read())
+        raw = r.read()
+    data = _prom(raw.decode("utf-8", "replace")) if topic in _PROM else json.loads(raw)
     _CACHE[topic] = (time.time(), data)
     return data
 
@@ -167,7 +196,134 @@ def _zigbee(d, brief=False):
     return severity, " ".join(x.strip() for x in lines if x and x.strip())
 
 
-_READERS = {"backups": _backups, "updates": _updates, "strom": _strom, "zigbee": _zigbee}
+def _de(x, digits=1):
+    return f"{x:.{digits}f}".replace(".", ",")
+
+
+def _fix(text):
+    """Akku-Doktor 1.1.0 sends some German texts double-encoded ("verlÃ¤sslich"); undo that, else keep as is."""
+    text = str(text or "").strip()
+    if "Ã" not in text and "Â" not in text and "â€" not in text:
+        return text
+    for enc in ("cp1252", "latin-1"):
+        try:
+            return text.encode(enc).decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+    return text
+
+
+# ── Akku-Doktor ──────────────────────────────────────────────────
+def _akku(d, brief=False):
+    system = (d.get("storages") or {}).get("system") or {}
+    cap, war = system.get("capacity") or {}, system.get("warranty") or {}
+    severity, parts = "ok", []
+    if d.get("ha_connected") is False:
+        severity = "attention"
+        parts.append("Der Akku-Doktor bekommt gerade keine Daten von Home Assistant.")
+    alerts = [a for a in d.get("alerts") or [] if a]
+    for a in alerts[:MAX_ITEMS]:
+        severity = "attention"
+        text = (a.get("text") or a.get("message") or a.get("title") or "") if isinstance(a, dict) else a
+        parts.append(_fix(text).rstrip(".") + ".")
+    if alerts:
+        parts[-1] += _more(alerts, MAX_ITEMS)
+    if war.get("status") not in (None, "", "ok"):
+        severity = "attention"
+        notes = " ".join(_fix(n) for n in war.get("notes") or [] if n)
+        parts.append("Bei der Garantie des Speichers ist etwas auffällig." + (f" {notes}" if notes else ""))
+    if brief:
+        return severity, " ".join(parts)
+    soh, kwh = cap.get("soh"), cap.get("cap_kwh")
+    if cap.get("status") == "ok" and soh is not None and kwh is not None:
+        line = f"Der Speicher hat noch etwa {soh:.0f} Prozent seiner Kapazität, rund {_de(kwh)} Kilowattstunden nutzbar"
+        if cap.get("lo") is not None and cap.get("hi") is not None:
+            line += f" ({_de(cap['lo'])} bis {_de(cap['hi'])})"
+        parts.insert(0, line + ".")
+    else:
+        parts.insert(0, "Für eine sichere Schätzung der Kapazität reichen die Daten noch nicht.")
+    cycles = (d.get("cycles") or {}).get("system")
+    if cycles:
+        end = str(war.get("end") or "")[:4]
+        parts.append(f"Bisher {cycles:.0f} Vollzyklen" + (f", Garantie bis {end}." if end else "."))
+    return severity, " ".join(parts)
+
+
+# ── Automations-Prüfer ───────────────────────────────────────────
+def _ftitle(f):
+    return str(f.get("title") or f.get("item_label") or f.get("item") or "").strip().rstrip(".")
+
+
+def _automationen(d, brief=False):
+    findings = d.get("findings") or []
+    crit = [f for f in findings if f.get("severity") == "critical"]
+    warn = [f for f in findings if f.get("severity") == "warning"]
+    last = d.get("last_check") or 0
+    age_h = (time.time() - last) / 3600 if last else None
+    severity, parts = "ok", []
+    if d.get("status") not in (None, "", "ok") or d.get("trusted") is False:
+        severity = "attention"
+        detail = str(d.get("detail") or "").strip().rstrip(".")
+        parts.append("Der Automations-Prüfer kann Home Assistant gerade nicht sauber lesen" + (f": {detail}." if detail else "."))
+    elif age_h is not None and age_h > PRUEFER_STALE_H:
+        severity = "attention"
+        parts.append(f"Der Automations-Prüfer hat seit {age_h:.0f} Stunden nicht mehr geprüft.")
+    if crit:
+        severity = "attention"
+        head = "Ein kritischer Befund" if len(crit) == 1 else f"{len(crit)} kritische Befunde"
+        parts.append(f"{head} bei den Automationen: " + "; ".join(_ftitle(f) for f in crit[:MAX_ITEMS]) + "."
+                     + _more(crit, MAX_ITEMS))
+    if warn and not brief:                 # warnings stay out of the morning briefing; the Prüfer pushes criticals itself
+        severity = "attention"
+        head = "Eine Warnung" if len(warn) == 1 else f"{len(warn)} Warnungen"
+        parts.append(f"{head}: " + "; ".join(_ftitle(f) for f in warn[:MAX_ITEMS]) + "." + _more(warn, MAX_ITEMS))
+    if parts:
+        return severity, " ".join(parts)
+    info = sum(1 for f in findings if f.get("severity") == "info")
+    tail = f" Dazu {info} Hinweise zur Ordnung." if info and not brief else ""
+    return "ok", "Die Automationen sind in Ordnung." + tail
+
+
+# ── Homelab-Drift ────────────────────────────────────────────────
+def _drift(m, brief=False):
+    if not m:
+        raise ValueError("no metrics")
+
+    def val(name, **labels):
+        return m.get((name, tuple(sorted(labels.items()))))
+
+    severity, parts = "ok", []
+    last = val("homelab_drift_last_success_timestamp_seconds")
+    age_h = (time.time() - last) / 3600 if last else None
+    if val("homelab_drift_scan_ok") == 0:
+        severity = "attention"
+        parts.append("Der letzte Scan von Homelab-Drift ist gescheitert.")
+    elif age_h is not None and age_h > DRIFT_STALE_H:
+        severity = "attention"
+        parts.append(f"Homelab-Drift hat seit {age_h:.0f} Stunden nicht mehr gescannt.")
+    down = sorted(dict(labels).get("host", "?") for (name, labels), v in m.items()
+                  if name == "homelab_drift_host_reachable" and v == 0)
+    if down:
+        severity = "attention"
+        parts.append(f"Homelab-Drift erreicht {_join(down)} nicht.")
+    instant = int(val("homelab_drift_findings", severity="instant", status="open") or 0)
+    digest = int(val("homelab_drift_findings", severity="digest", status="open") or 0)
+    if instant:
+        severity = "attention"
+        parts.append("Eine wichtige Änderung im Homelab ist noch offen." if instant == 1
+                     else f"{instant} wichtige Änderungen im Homelab sind noch offen.")
+    if digest and not brief:
+        parts.append("Eine kleinere Änderung wartet auf den Wochenbericht." if digest == 1
+                     else f"{digest} kleinere Änderungen warten auf den Wochenbericht.")
+    if not parts:
+        return "ok", "Im Homelab hat sich nichts Unerwartetes verändert."
+    if severity == "ok":
+        parts.insert(0, "Im Homelab ist nichts Dringendes.")
+    return severity, " ".join(parts)
+
+
+_READERS = {"backups": _backups, "updates": _updates, "strom": _strom, "zigbee": _zigbee,
+            "akku": _akku, "automationen": _automationen, "drift": _drift}
 
 
 def report(topic, brief=False):
@@ -188,7 +344,8 @@ def spoken(topic):
     results = [report(t) for t in SOURCES]
     bad = [text for sev, text in results if sev != "ok"]
     if not bad:
-        return "Auf dem Pi ist alles in Ordnung: Backups, Updates, Strom und Zigbee ohne Auffälligkeiten."
+        return ("Auf dem Pi ist alles in Ordnung: Backups, Updates, Strom, Zigbee, Speicher, Automationen "
+                "und Homelab ohne Auffälligkeiten.")
     return " ".join(bad)
 
 

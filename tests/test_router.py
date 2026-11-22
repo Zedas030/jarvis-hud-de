@@ -139,6 +139,33 @@ class HomeRules(Base):
     def test_state_answer(self):
         self.assertIn("an", self.local("Ist das Licht im Wohnzimmer an?", "home_state"))
 
+    def test_since_when_says_the_time(self):
+        """17.11.2026: "Seit wann ist das Licht im Wohnzimmer an?" only got "LED ist an"."""
+        import ha_since
+        old = ha_since.phrase
+        asked = []
+        ha_since.phrase = lambda eid, state, last_changed=None, now=None: (
+            asked.append((eid, state)) or "seit 16:52 an, also seit 51 Minuten")
+        try:
+            for text in ("Seit wann ist das Licht im Wohnzimmer an?", "Wie lange ist das Licht im Wohnzimmer schon an?",
+                         "Wie lange ist das Licht im Wohnzimmer schon aktiv?"):
+                reply = self.local(text, "home_state")
+                self.assertIn("seit 16:52 an, also seit 51 Minuten", reply, text)
+            self.assertEqual(asked[0], ("light.wohnzimmer", "on"))
+            self.assertEqual(CALLS, [], "a question must never switch")
+        finally:
+            ha_since.phrase = old
+
+    def test_since_when_without_history_still_answers(self):
+        import ha_since
+        old = ha_since.phrase
+        ha_since.phrase = lambda *a, **k: ""
+        try:
+            reply = self.local("Seit wann ist das Licht im Wohnzimmer an?", "home_state")
+            self.assertIn("seit wann sehe ich gerade nicht", reply)
+        finally:
+            ha_since.phrase = old
+
     def test_led_lamp_is_a_lamp(self):
         self.local("LED Wohnzimmer aus", "home")
         self.assertEqual(CALLS, [("light.led_wohnzimmer", "turn_off", {})])
@@ -352,6 +379,25 @@ class Routines(Base):
     def test_only_exact_phrase(self):
         self.save([{"name": "Gute Nacht", "triggers": ["gute nacht"], "steps": [{"say": "x"}]}])
         self.assertNotEqual(route("Ich wünsche Anna eine gute Nacht").get("handler"), "routine")
+
+    def test_misheard_phrase_still_runs(self):
+        # 19.11.2026: Whisper heard "Ciao, was ist gute Nacht." and Claude answered instead of the routine
+        self.save([{"name": "Gute Nacht", "triggers": ["gute nacht"], "steps": [{"say": "Schlafen Sie gut."}]}])
+        self.assertEqual(self.local("Ciao, was ist gute Nacht.", "routine"), "Schlafen Sie gut.")
+        self.assertEqual(self.local("Gute Nacht, schlaf gut", "routine"), "Schlafen Sie gut.")
+        for other in ("Was passiert, wenn ich Gute Nacht sage?", "Sag Anna gute Nacht",
+                      "Wenn ich gute Nacht sage, mach das Licht aus", "Na dann gute Nacht und so weiter und so fort"):
+            self.assertIsNone(routines.find(other), other)
+
+    def test_say_list_picks_one_never_twice_in_a_row(self):
+        self.save([{"name": "Gute Nacht", "triggers": ["gute nacht"], "steps": [{"say": ["A.", "B.", "C."]}]}])
+        said = [self.local("Gute Nacht", "routine") for _ in range(12)]
+        self.assertTrue(set(said) <= {"A.", "B.", "C."})
+        self.assertTrue(all(a != b for a, b in zip(said, said[1:])))
+        self.assertIn("einen von 3 Sprüchen", routines.explain(routines.load()[0], names={}))
+        self.assertTrue(routines.validate([{"say": []}]))
+        self.assertTrue(routines.validate([{"say": ["ok", 3]}]))
+        self.assertEqual(routines.validate([{"say": ["ok", "auch ok"]}]), "")
 
     def test_tell_and_failures(self):
         self.save([{"name": "Test", "triggers": ["test routine"],
@@ -704,3 +750,177 @@ class MusicRooms(Base):
         self.assertNotEqual(route("Mach das Licht im Wohnzimmer an").get("handler"), "music")
         self.llm("Spiel die Playlist Chill im Wohnzimmer", "music")
         self.assertEqual(self.moved, [])
+
+
+class StopTalking(Base):
+    """19.11.2026: "Jarvis, stopp" over the bedroom satellite went to Claude. A bare stop word ends whatever
+    Jarvis says, locally and silently; a stop with a topic stays with its handler."""
+    def setUp(self):
+        super().setUp()
+        import satellite_quiet
+        self.hushed = []
+        self.patch = unittest.mock.patch.object(satellite_quiet, "hush",
+                                                side_effect=lambda why="": self.hushed.append(why) or ["sonos"])
+        self.patch.start()
+
+    def tearDown(self):
+        self.patch.stop()
+        super().tearDown()
+
+    def test_bare_stop_words_hush_silently(self):
+        for text in ("Stopp", "Stopp.", "Stop!", "Jarvis, stopp", "Hör auf", "Sei still", "Ruhe bitte",
+                     "Okay, das reicht", "Halt stopp", "Psst"):
+            r = route(text)
+            self.assertEqual((r["kind"], r.get("handler")), ("local", "stop_talk"), (text, r))
+            self.assertTrue(r["silent"], text)
+        self.assertEqual(len(self.hushed), 10)
+
+    def test_stop_with_a_topic_is_no_hush(self):
+        for text in ("Stopp die Musik", "Timer stoppen", "Hör auf zu blinken", "Wann hört der Regen auf?"):
+            self.assertNotEqual(route(text).get("handler"), "stop_talk", text)
+        self.assertEqual(self.hushed, [])
+
+
+class MusicIsNotAnnounced(Base):
+    """17.11.2026: "Musik an" → "Die Musik läuft jetzt im Wohnzimmer" — he hears it, Jarvis need not say it.
+    And "Wohnzimmer, lauter" moved the music instead of turning it up."""
+    def setUp(self):
+        super().setUp()
+        import speakers
+        self.music, self.room_reply = [], "Die Musik läuft jetzt im Wohnzimmer."
+        self.patches = [unittest.mock.patch.object(speakers, "rooms", return_value=["Wohnzimmer", "Schlafzimmer"]),
+                        unittest.mock.patch.object(jarvis_mcp, "_music",
+                                                   side_effect=lambda a: self.music.append(a) or (
+                                                       self.room_reply if a.get("action") == "transfer" else "Erledigt: play."))]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+        super().tearDown()
+
+    def test_started_music_is_silent(self):
+        for text in ("Musik im Wohnzimmer an.", "Musik an", "Nächster Titel"):
+            r = route(text)
+            self.assertEqual(r["kind"], "local", text)
+            self.assertTrue(r["silent"], (text, r))
+            self.assertTrue(r["reply"], "the HUD still shows what happened")
+
+    def test_a_failure_is_still_said(self):
+        self.room_reply = "Der Lautsprecher im Wohnzimmer ist für Spotify gerade nicht erreichbar."
+        r = route("Musik im Wohnzimmer an.")
+        self.assertFalse(r["silent"])
+        self.assertIn("nicht erreichbar", r["reply"])
+
+    def test_other_answers_are_spoken(self):
+        self.assertFalse(route("Ist das Licht im Wohnzimmer an?")["silent"])
+
+    def test_room_and_louder_turns_it_up(self):
+        route("Wohnzimmer, lauter.")
+        self.assertEqual([a.get("action") for a in self.music], ["volume_up"])
+
+
+class MusicQuestions(Base):
+    """16.11.2026: "Warum war die Musik gerade im Schlafzimmer? Guck mal nach." moved the music into the
+    bedroom, and "Warum läuft die Musik im Schlafzimmer?" asked for a bedroom switch. Questions go to Claude."""
+    def setUp(self):
+        super().setUp()
+        import speakers
+        self.music = []
+        self.patches = [unittest.mock.patch.object(speakers, "rooms", return_value=["Wohnzimmer", "Schlafzimmer"]),
+                        unittest.mock.patch.object(jarvis_mcp, "_music",
+                                                   side_effect=lambda a: self.music.append(a) or "Erledigt.")]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+        super().tearDown()
+
+    def test_questions_never_move_the_music(self):
+        for text in ("warum war die Musik gerade im Schlafzimmer? Guck mal bitte nach.",
+                     "warum läuft die Musik im Schlafzimmer, ich sitze im Wohnzimmer.",
+                     "Warum läuft die Musik im Schlafzimmer und nicht im Wohnzimmer?",
+                     "warum? warum war die Musik im Schlafzimmer an? Mach die Musik im Wohnzimmer an.",
+                     "Läuft im Schlafzimmer Musik?"):
+            self.assertEqual(route(text)["kind"], "llm", (text, route(text)))
+        self.assertEqual(self.music, [])
+
+    def test_commands_still_local(self):
+        self.assertEqual(route("Musik im Wohnzimmer an.")["kind"], "local")
+        self.assertEqual(route("Kannst du die Musik leiser machen?")["kind"], "local")
+        self.assertEqual([a.get("action") for a in self.music], ["transfer", "volume_down"])
+
+
+class ArtistSongs(Base):
+    """19.11.2026: "Spiel alle Songs von X" — Jarvis only opened the search and told him to do it himself."""
+    def setUp(self):
+        super().setUp()
+        import speakers
+        self.music = []
+        self.patches = [unittest.mock.patch.object(speakers, "rooms", return_value=["Wohnzimmer", "Schlafzimmer"]),
+                        unittest.mock.patch.object(jarvis_mcp, "_music",
+                                                   side_effect=lambda a: self.music.append(a) or "Linkin Park läuft jetzt im Wohnzimmer.")]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+        super().tearDown()
+
+    def test_plays_the_artist_locally(self):
+        for text in ("Spiel alle Songs von Linkin Park im Wohnzimmer.", "Jarvis, spiel mal Musik von Linkin Park",
+                     "Spiele Lieder von den Toten Hosen im Schlafzimmer ab", "Kannst du Songs von AnnenMayKantereit spielen"):
+            r = route(text)
+            if text.startswith("Kannst"):
+                self.assertNotEqual(r.get("handler"), "artist", text)   # word order not covered: Claude has action artist
+                continue
+            self.assertEqual(r.get("handler"), "artist", text)
+        self.assertEqual([(a["action"], a["query"], a["room"]) for a in self.music],
+                         [("artist", "linkin park", "Wohnzimmer"), ("artist", "linkin park", ""),
+                          ("artist", "den toten hosen", "Schlafzimmer")])
+
+    def test_not_an_artist(self):
+        for text in ("Spiel die Musik vom Schlafzimmer im Wohnzimmer", "Spiel Musik von Schlafzimmer",
+                     "Welche Songs von Linkin Park kennst du?", "Spiel Lieder von Linkin Park im Auto"):
+            self.assertNotEqual(route(text).get("handler"), "artist", text)
+        self.assertEqual([a for a in self.music if a.get("action") == "artist"], [])
+
+
+class LikedSongs(Base):
+    """16.11.2026: "Spiel meine Lieblingssongs im Wohnzimmer" only moved what played (one Sonos track)."""
+    def setUp(self):
+        super().setUp()
+        import speakers
+        self.music = []
+        self.patches = [unittest.mock.patch.object(speakers, "rooms", return_value=["Wohnzimmer", "Schlafzimmer"]),
+                        unittest.mock.patch.object(jarvis_mcp, "_music",
+                                                   side_effect=lambda a: self.music.append(a) or "Läuft.")]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+        super().tearDown()
+
+    def test_plays_the_whole_list(self):
+        for text in ("spiele meine Lieblingssongs auf Spotify im Wohnzimmer ab.",
+                     "Spiele alle meine Lieblingssongs im Wohnzimmer, nicht nur den ersten Titel.",
+                     "spiegle meine Playlist im Wohnzimmer ab.",
+                     "Mach meine Lieblingslieder an",
+                     "Spiele meine Lieblingssons im Wohnzimmer.",       # Whisper, 19.11.2026
+                     "spiel meine Lieblingsongs im Wohnzimmer"):
+            self.assertEqual(route(text).get("handler"), "liked", text)
+        self.assertEqual([a["action"] for a in self.music], ["liked"] * 6)
+        self.assertEqual([a["room"] for a in self.music], ["Wohnzimmer", "Wohnzimmer", "Wohnzimmer", "", "Wohnzimmer",
+                                                           "Wohnzimmer"])
+
+    def test_questions_and_changes_go_to_claude(self):
+        for text in ("Welche Lieblingssongs habe ich?", "Füg das zu meinen Lieblingssongs hinzu",
+                     "Warum läuft nur der erste meiner Lieblingssongs?"):
+            self.assertNotEqual(route(text).get("handler"), "liked", text)
+        self.assertEqual(self.music, [])

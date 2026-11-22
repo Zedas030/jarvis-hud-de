@@ -13,7 +13,7 @@ They live in config/routines.json (format in config/routines.example.json):
                 {"say": "Schlafen Sie gut, Sir."}]}]
 
 Step kinds:
-  say   fixed text Jarvis says
+  say   fixed text Jarvis says; a list of texts: one of them, never the same twice in a row
   do    a sentence for the local router, its answer is NOT spoken (switching)
   tell  a sentence for the local router, its answer IS spoken (weather, alarm, list)
   ha    a Home Assistant service (light / switch / fan / media_player / scene only);
@@ -26,6 +26,7 @@ Wecker") goes through the LLM, which writes the routine with routine_save.
 import json
 import os
 import pathlib
+import random
 import re
 import time
 
@@ -66,8 +67,29 @@ def _save(data):
     _CACHE["mtime"] = None
 
 
+# Speech recognition bends the phrase: "Jarvis, gute Nacht" came out as "Ciao, was ist gute Nacht." and went
+# to Claude, who told the user to say "Gute Nacht" (19.11.2026). A trigger of two words or more still counts at
+# the start or the end of a short sentence. Not when the sentence is about the phrase or for someone else.
+LOOSE_EXTRA = 3
+_NOT_LOOSE = re.compile(r"\b(?:wenn|sag\w*|routine\w*|passiert|wünsch\w*|nicht|kein\w*|warum|wieso|heißt|bedeutet|"
+                        r"englisch|übersetz\w*|schreib\w*|schick\w*|nachricht)\b")
+
+
+def loose(text, phrase):
+    """True when the (normalised) sentence is `phrase` give or take a few misheard words around it."""
+    n, p = _norm(text), _norm(phrase)
+    if not n or not p:
+        return False
+    if n == p:
+        return True
+    words, pw = n.split(), p.split()
+    if len(pw) < 2 or len(words) - len(pw) > LOOSE_EXTRA or _NOT_LOOSE.search(n):
+        return False
+    return words[:len(pw)] == pw or words[-len(pw):] == pw
+
+
 def find(text):
-    """The routine this sentence triggers — only on (nearly) the exact phrase."""
+    """The routine this sentence triggers — the exact phrase, or a short sentence that starts or ends with it."""
     n = _norm(text)
     if not n:
         return None
@@ -76,6 +98,9 @@ def find(text):
         if m and _norm(r.get("name")) == m.group(1):
             return r
         if any(_norm(t) == n for t in r.get("triggers") or []):
+            return r
+    for r in load():
+        if any(loose(n, t) for t in r.get("triggers") or []):
             return r
     return None
 
@@ -87,6 +112,9 @@ def validate(steps):
     for s in steps:
         if not isinstance(s, dict) or len({"say", "do", "tell", "ha", "wait"} & set(s)) != 1:
             return f"Ungültiger Schritt: {s}"
+        if "say" in s and not (isinstance(s["say"], str) and s["say"].strip() or isinstance(s["say"], list)
+                               and s["say"] and all(isinstance(x, str) and x.strip() for x in s["say"])):
+            return f"say muss ein Text oder eine Liste von Texten sein: {s}"
         if "ha" in s:
             dom, _, svc = str(s["ha"]).partition(".")
             eid = str(s.get("entity_id") or "")
@@ -108,13 +136,25 @@ def _ha_step(s):
     jarvis_mcp._ha(f"/api/services/{dom}/{svc}", body)
 
 
+_LAST_SAID = {}          # routine name -> the text picked last time from a list of sayings
+
+
+def _pick(say, key):
+    if not isinstance(say, list):
+        return str(say)
+    options = [str(x) for x in say if str(x).strip()] or [""]
+    fresh = [x for x in options if x != _LAST_SAID.get(key)] or options
+    _LAST_SAID[key] = random.choice(fresh)
+    return _LAST_SAID[key]
+
+
 def run(routine, local):
     """Execute the steps. `local(sentence)` is the router's local path (reply or None)."""
     spoken, failed = [], []
-    for s in routine.get("steps") or []:
+    for i, s in enumerate(routine.get("steps") or []):
         try:
             if "say" in s:
-                spoken.append(str(s["say"]))
+                spoken.append(_pick(s["say"], f"{routine.get('name')}:{i}"))
             elif "wait" in s:
                 time.sleep(max(0, min(float(s["wait"]), 30)))
             elif "ha" in s:
@@ -162,7 +202,9 @@ def explain(routine, names=None):
     names = _entity_names() if names is None else names
     steps = []
     for s in routine.get("steps") or []:
-        if "say" in s:
+        if "say" in s and isinstance(s["say"], list):
+            steps.append(f"ich sage einen von {len(s['say'])} Sprüchen, zum Beispiel „{s['say'][0]}“")
+        elif "say" in s:
             steps.append(f"ich sage „{s['say']}“")
         elif "wait" in s:
             steps.append(f"ich warte {s['wait']} Sekunden")
